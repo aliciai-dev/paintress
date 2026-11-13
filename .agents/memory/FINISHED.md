@@ -163,3 +163,13 @@
 - README 双语重写（不再以 `.ptr`/格式术语开头，用户文档里拿掉 `.ptr`）；`server.json` 入仓并在 `verify:pkg` 校验版本。
 - 质量基线：双端 `tsc` 0 错误、**22 文件 286 用例全绿**、`pnpm build` + `verify:pkg` 通过；新增真实 Chromium 交互回归。
 - 证据：`.agents/implementations/2026-11-14_0127_notes-presets-components.md`。
+
+### 弹窗落到宿主浏览器 + 提示词只说「跑 paintress web」（2026-11-14）
+
+- 根因两个：`openBrowser` 在 WSL 里走 `xdg-open`（WSLg 下有 `DISPLAY`，于是开 WSL 内的 Linux 浏览器）；提示词里还写着让 agent 自己开浏览器 / 把 URL 交给用户。
+- 修：WSL 判定（`WSL_DISTRO_NAME`/`WSL_INTEROP`/内核 release）→ `wslview` → `powershell.exe Start-Process` → `cmd.exe start` → `explorer.exe`；一个都没有就不弹，绝不回退 `xdg-open`。
+- 提示词：MCP `instructions`、`paintress_viewer` 描述、`SKILL.md` 统一成「作画前跑 `paintress web`，到此为止」；去掉 `openedBrowser` 字段与「把人指向 URL」的 hint。
+- CLI：裸 `paintress web` 改成幂等且立刻返回（窗口由它自己开），占住终端的形态改名 `--foreground`，`--daemon` 留作别名；`ensureViewer` 用 `--no-open` 拉起子进程并用项目深链弹一次（只有一个窗口、落在本项目）。
+- 实测（本机 WSL2 + WSLg）：`paintress web` → Windows 侧 Firefox 窗口带 paintress 标题；裸 `web` 幂等复用、`ping`/`stop` 正常。
+- 质量基线：双端 `tsc` 0 错误、**22 文件 297 用例全绿**、`pnpm build` 通过。
+- 证据：`.agents/implementations/2026-11-14_0428_wsl-host-browser-and-minimal-viewer-prompt.md`。

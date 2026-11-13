@@ -195,7 +195,7 @@ function remapIds(node: unknown, taken: Set<string>): void {
 export const TOOLS: Record<string, ToolDef> = {
   paintress_viewer: {
     description:
-      '确保本地查看器在运行，并把当前项目注册进去，返回人可以打开的 URL。幂等：已在运行就直接复用（返回现有 pid/端口，绝不起第二个进程），可以在开始画/改/展示设计稿之前无条件调用。**开始作画前先调它，不要等人提醒**',
+      '确保本地查看器在运行，并把当前项目注册进去。幂等：已在运行就直接复用（返回现有 pid/端口，绝不起第二个进程），可以在开始画/改/展示设计稿之前无条件调用。**开始作画前先调它，不要等人提醒**',
     inputSchema: {
       dir: z.string().optional().describe('要注册的目录，默认当前工作目录'),
       project: z.string().optional().describe('项目名（URL 里那一段），默认取「父目录/目录名」'),
@@ -217,8 +217,6 @@ export const TOOLS: Record<string, ToolDef> = {
         pid: info.pid,
         port: info.port,
         started: info.startedDaemon,
-        openedBrowser: info.openedBrowser,
-        hint: `把人指向 ${info.url}（单份设计稿加深链 ?file=<相对路径>）`,
       };
     },
   },
@@ -524,7 +522,7 @@ export const TOOLS: Record<string, ToolDef> = {
     },
     run: async (a) => {
       if (!isDaemonRunning()) {
-        throw new Error('paintress web 未运行，无法读取标记；先调用 paintress_viewer（或运行 paintress web --daemon）');
+        throw new Error('paintress web 未运行，无法读取标记；先调用 paintress_viewer（或运行 paintress web）');
       }
       const project = optStr(a, 'project') ?? '';
       const action = optStr(a, 'action') ?? 'list';

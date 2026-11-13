@@ -22,18 +22,21 @@ If either prints something, **do not install again**. Use the existing binary. `
 
 ## Start the viewer before you draw
 
-**Drawing means someone is watching.** Before the first write of a drawing session (creating, editing or showing a design), make sure the viewer is running — do not wait to be asked, and do not draw into the void first.
+**Drawing means someone is watching.** Before the first write of a drawing session (creating, editing or showing a design), run:
 
-- MCP: call `paintress_viewer` — it ensures the viewer, registers this project, and returns the URL to hand over.
-- CLI: run `paintress web --daemon` — it prints `pid` / `port` / `http` and returns immediately.
+```bash
+paintress web
+```
 
-Both are **idempotent**: if a viewer is already up they reuse it and start nothing, so running them every time is safe and you will never end up with a second process. Never run plain `paintress web` in a shell call — the foreground form blocks until the process is stopped.
+That is the whole step. It ensures the viewer is running, opens the window itself, prints `pid` / `port` / `http` and returns — so it is safe to run before every session, and there is never a second process. Do not open a browser yourself and do not narrate the command: the window is its own business.
+
+MCP: `paintress_viewer` does the same and hands back the URL.
 
 ## Tools
 
 | Tool | What it does |
 | --- | --- |
-| `paintress_viewer` | **ensure the viewer is up** and register the project; idempotent, returns the URL |
+| `paintress_viewer` | **ensure the viewer is up** and register the project; idempotent |
 | `paintress_new` | **create a design file.** Writes a valid document with one empty board; returns the `boardId`. Refuses to overwrite; a `path` without an extension gets the default one |
 | `paintress_doc_info` | document summary: version, format flavor, node counts, variables, top-level nodes |
 | `paintress_query` | find nodes by type / name (exact or regex) / id / reusable |
@@ -66,7 +69,7 @@ Two project-level files keep a design consistent. Both are created automatically
 
 ## Working rules
 
-1. **Viewer first.** Start it (`paintress_viewer` / `paintress web --daemon`) before the first write — see above. It is idempotent, so there is no reason to skip it.
+1. **Viewer first.** Run `paintress web` before the first write — see above. It is idempotent, so there is no reason to skip it.
 2. **Nothing to edit? Create it.** `paintress_new` is the only way to make a file; there is no "empty document" state to work around, and no need to hand-write JSON.
 3. **Query before you edit.** Node ids come from the file; never invent them.
 4. **`#N` means a marker.** When the user writes `#1`, call `paintress_marks` and map `#1` to a real node id. Markers are per viewer session.
@@ -81,23 +84,19 @@ Two project-level files keep a design consistent. Both are created automatically
 
 ## Viewer
 
-The human-facing viewer is a separate process:
+The viewer is a separate process; `paintress web` starts it or reuses it, and returns either way (add `--foreground` only when you want its log in your shell).
 
 ```bash
-paintress web --daemon          # idempotent: reuses the running one, else starts it
-paintress watch <name> <dir>    # register a directory (only when it is outside the project)
+paintress web
+paintress watch <name> <dir>    # register a directory that lives outside the project
 ```
 
-Ask the user to open the URL and click the nodes they mean; then read `paintress_marks` to learn which ids those clicks became.
+- project list: `http://localhost:3316/`
+- one document: `http://localhost:3316/<name>?file=<relative/path>`
 
 ## Bind the project yourself — do not wait to be asked
 
-When the user refers to a design, asks to see one, or asks to draw something in this project, **you** make it viewable — start with `paintress_viewer` / `paintress web --daemon` (both idempotent). The MCP server also auto-registers the working directory at startup and re-checks it before every write (its name is the last two path segments, slash included, e.g. `acme/shop`); if that already covers the request, just hand over the viewer URL:
-
-- viewer: `http://localhost:3316/`
-- deep link to a file: `http://localhost:3316/<name>?file=<relative/path>` (e.g. `http://localhost:3316/acme/shop?file=design/main.pen`)
-
-Starting the viewer for the first time opens the browser on the agent's own project; you do not have to tell the user to visit anything.
+When the user refers to a design, asks to see one, or asks to draw something in this project, **you** make it viewable: `paintress web` is the whole call. The MCP server also auto-registers the working directory at startup and re-checks it before every write (its name is the last two path segments, slash included, e.g. `acme/shop`), so the common case needs nothing else.
 
 If the design lives elsewhere (a design file outside the working directory, or a second project), bind it yourself:
 
@@ -105,4 +104,4 @@ If the design lives elsewhere (a design file outside the working directory, or a
 paintress watch <name> <dir> [--depth 1..6]
 ```
 
-Prefer the same auto-derived name when it applies, so the URL stays stable. Never ask the user to run `watch` — the goal is that "look at / draw a design" resolves to a viewable URL with zero extra steps. The project list in any open viewer window refreshes on its own once the registration lands.
+Prefer the auto-derived name when it applies, so the URL stays stable. Never ask the user to run `watch`; the project list in any open viewer window refreshes on its own once the registration lands.

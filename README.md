@@ -64,7 +64,7 @@ paintress component list|insert ...                     project component librar
 paintress render <file> <out.html>                      write the canvas as HTML
 paintress shot <file> <out.png> [--scale n] [--board id|name]  render to PNG (one board or the whole canvas)
 
-paintress web [--port n] [--idle ms] [--daemon]         ensure the viewer is running (idempotent)
+paintress web [--port n] [--idle ms] [--foreground]   ensure the viewer is running (idempotent, returns at once)
 paintress ping | status | stop                          viewer control
 paintress watch <name> <dir> | unwatch <name>           register a directory to browse
 paintress attach <name>                                 keep the viewer alive while an agent works
@@ -77,12 +77,12 @@ paintress mcp-config <client>                           print the config snippet
 ## Viewer
 
 ```bash
-paintress web --daemon
+paintress web
 paintress watch demo ./demo
 # open http://localhost:3316/demo
 ```
 
-`paintress web --daemon` is idempotent: if a viewer is already running it prints that process's `pid` / `port` / `http` and exits, so it is safe to run before every drawing session — there is never a second instance. The foreground form (`paintress web`) reuses a running viewer the same way instead of erroring; it only blocks when it had to start one. `paintress stop` is how you replace a running viewer (e.g. on another port).
+`paintress web` is idempotent and returns immediately: if a viewer is already running it prints that process's `pid` / `port` / `http`, otherwise it starts one and opens the viewer window on it. Either way the command is safe to run before every drawing session — there is never a second instance, and the window is opened by the program, in the desktop browser (`--foreground` keeps the process attached to your shell when you want its log; `paintress stop` is how you replace a running viewer, e.g. on another port). Under WSL the window lands in the Windows browser, never in a browser inside the distro.
 
 Agents get the same guarantee from the MCP side: `paintress_viewer` ensures the viewer and registers the current project, and the MCP server re-checks it before every write, so the viewer is up before the first edit instead of after someone asks.
 
@@ -94,7 +94,7 @@ Canvas navigation: wheel zooms at the pointer, space / middle button / empty are
 
 Projects are named after their directory path (`c-thun/raybend`), so the URL reads like the path: `http://localhost:3316/c-thun/raybend?file=design/editor.pen`. Project rows have an **×** on hover that unbinds the project (design files are untouched; an agent re-registers on its next start), and **Stop server** in the sidebar footer shuts the viewer process down — both ask for confirmation first.
 
-The viewer follows the agent instead of asking you to manage it. When an agent starts the viewer it opens the browser on its own project; projects appear and leave with a short animation as agents come and go; when the last project is gone a 10-second countdown closes the window and the process. A browser that nobody is looking at no longer keeps the process alive.
+The viewer follows the agent instead of asking you to manage it. When an agent starts the viewer it opens your browser on that agent's own project — nothing for the agent to run twice, nothing for you to open by hand; projects appear and leave with a short animation as agents come and go; when the last project is gone a 10-second countdown closes the window and the process. A browser that nobody is looking at no longer keeps the process alive.
 
 When npm has a newer release than the running one, the version badge in the header grows a second line in rust red; clicking it opens the upgrade prompt (one copyable sentence) and the GitHub link. The check is client-optional on the daemon side: if npm is unreachable, the badge simply stays as it is.
 

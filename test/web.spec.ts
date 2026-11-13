@@ -459,3 +459,51 @@ describe('浏览器地址拼装', () => {
     }
   });
 });
+
+describe('浏览器启动器：别开错地方（WSL → 宿主浏览器）', () => {
+  const URL = 'http://localhost:3316/acme/shop?file=design%2Fmain.ptr';
+  const wsl = {
+    platform: 'linux' as const,
+    // WSLg 会把 DISPLAY / WAYLAND_DISPLAY 塞满，xdg-open 于是会开 WSL 里的 Linux 浏览器
+    env: { WSL_DISTRO_NAME: 'Ubuntu-24.04', DISPLAY: ':0', WAYLAND_DISPLAY: 'wayland-0' },
+  };
+
+  it('WSL 里即使有 xdg-open 也不用它', async () => {
+    const { browserLauncher } = await import('../src/web/open-browser.js');
+    expect(browserLauncher(URL, { ...wsl, has: (c) => c === 'xdg-open' })).toBeNull();
+  });
+
+  it('WSL 里按 wslview → powershell → cmd → explorer 的顺序选（第一个存在的）', async () => {
+    const { browserLauncher } = await import('../src/web/open-browser.js');
+    const all = () => true;
+    expect(browserLauncher(URL, { ...wsl, has: all })?.cmd).toBe('wslview');
+    expect(browserLauncher(URL, { ...wsl, has: (c) => c !== 'wslview' })?.cmd).toBe('powershell.exe');
+    expect(browserLauncher(URL, { ...wsl, has: (c) => c === 'cmd.exe' })?.cmd).toBe('cmd.exe');
+    expect(browserLauncher(URL, { ...wsl, has: (c) => c === 'explorer.exe' })?.cmd).toBe('explorer.exe');
+  });
+
+  it('PowerShell 命令把 URL 当单引号字面量传（% & ? 不会被解释）', async () => {
+    const { browserLauncher } = await import('../src/web/open-browser.js');
+    const l = browserLauncher(URL, { ...wsl, has: (c) => c === 'powershell.exe' });
+    expect(l?.args).toEqual(['-NoProfile', '-NonInteractive', '-Command', `Start-Process '${URL}'`]);
+  });
+
+  it('WSL 判定：环境变量或内核 release 任意命中都算', async () => {
+    const { isWsl } = await import('../src/web/open-browser.js');
+    expect(isWsl({ platform: 'linux', env: { WSL_INTEROP: '/run/WSL/1_interop' } })).toBe(true);
+    expect(isWsl({ platform: 'linux', env: {}, osrelease: '5.15.90.1-microsoft-standard-WSL2' })).toBe(true);
+    expect(isWsl({ platform: 'linux', env: {}, osrelease: '6.5.0-41-generic' })).toBe(false);
+    // 非 Linux 平台上的同名环境变量不算数
+    expect(isWsl({ platform: 'darwin', env: { WSL_DISTRO_NAME: 'Ubuntu' } })).toBe(false);
+  });
+
+  it('非 WSL：Linux 无图形环境不弹，有 DISPLAY 才走 xdg-open；mac 走 open', async () => {
+    const { browserLauncher } = await import('../src/web/open-browser.js');
+    expect(browserLauncher(URL, { platform: 'linux', env: {}, osrelease: '6.5.0', has: () => true })).toBeNull();
+    expect(browserLauncher(URL, { platform: 'linux', env: { DISPLAY: ':0' }, osrelease: '6.5.0', has: (c) => c === 'xdg-open' })).toEqual({
+      cmd: 'xdg-open',
+      args: [URL],
+    });
+    expect(browserLauncher(URL, { platform: 'darwin', env: {}, has: () => true })?.cmd).toBe('open');
+  });
+});

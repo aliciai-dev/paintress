@@ -11,7 +11,9 @@ import { openBrowser, projectUrl } from './open-browser.js';
  * MCP server instructions），所以这条路径不能有副作用累积：
  * - daemon 已在跑 → 复用，不起第二个进程；
  * - 项目已注册且连接还活着 → 不再 watch/attach；
- * - 只有真的拉起 daemon 的那一次才开浏览器（避免每次调用都弹窗）。
+ * - 只有真的拉起 daemon 的那一次才开窗口（避免每次调用都弹窗），并且只开一个窗口、
+ *   直接落在本项目上：子进程用 `--no-open` 不自弹，由这里用项目深链弹。
+ *   窗口落在哪台机器、哪个浏览器，由 openBrowser 决定（WSL → Windows 宿主）。
  *
  * 可用 PAINTRESS_NO_AUTO_WEB=1 整体关闭。
  */
@@ -24,8 +26,6 @@ export interface ViewerInfo {
   url: string;
   /** 本次调用是否真的拉起了 daemon */
   startedDaemon: boolean;
-  /** 本次调用是否真的把浏览器叫起来了 */
-  openedBrowser: boolean;
 }
 
 export interface EnsureViewerOptions {
@@ -77,11 +77,11 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
       port: running.port,
       url: projectUrl(running.port, project),
       startedDaemon: false,
-      openedBrowser: false,
     };
   }
 
-  const { started, pid, port } = await ensureDaemon();
+  // 子进程不自弹窗口：由下面用「项目深链」弹一次，避免落到项目列表、也避免开两个标签页
+  const { started, pid, port } = await ensureDaemon({ noOpen: true });
   const watched = await sendRequest(
     { kind: 'watch', project, dir, owner: 'agent', ...(opts.depth !== undefined ? { depth: opts.depth } : {}) },
     8000,
@@ -92,9 +92,9 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   attached?.close();
   handles.set(project, await attachPersistent(project));
 
-  // 只在「本次拉起 daemon」时开一次浏览器，并直接落在自己的项目上
-  const openedBrowser = started && openBrowser(projectUrl(port, project));
-  return { project, pid, port, url: projectUrl(port, project), startedDaemon: started, openedBrowser };
+  // 只在「本次拉起 daemon」时开一次窗口，并直接落在自己的项目上
+  if (started) openBrowser(projectUrl(port, project));
+  return { project, pid, port, url: projectUrl(port, project), startedDaemon: started };
 }
 
 /**

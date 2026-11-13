@@ -64,7 +64,7 @@ paintress component list|insert ...                    项目组件库
 paintress render <file> <out.html>                     渲染为 HTML
 paintress shot <file> <out.png> [--scale n]            渲染为 PNG
 
-paintress web [--port n] [--idle ms] [--daemon]        确保查看器在跑（幂等）
+paintress web [--port n] [--idle ms] [--foreground]  确保查看器在跑（幂等，立刻返回）
 paintress ping | status | stop                         查看器控制
 paintress watch <name> <dir> | unwatch <name>          注册/移除要浏览的目录
 paintress attach <name>                                agent 工作期间保持查看器存活
@@ -77,12 +77,12 @@ paintress mcp-config <client>                          打印单个客户端的�
 ## 查看器
 
 ```bash
-paintress web --daemon
+paintress web
 paintress watch demo ./demo
 # 打开 http://localhost:3316/demo
 ```
 
-`paintress web --daemon` 是幂等的：已经在跑就打印那个进程的 `pid` / `port` / `http` 后退出，所以每次开始作画前无条件跑一遍都没问题——永远不会出现第二个实例。前台形式（`paintress web`）同样复用正在跑的查看器，而不是报错；只有它自己真去启动时才会占住终端。要换端口/重启，用 `paintress stop`。
+`paintress web` 是幂等的、且立刻返回：已经在跑就打印那个进程的 `pid` / `port` / `http`，没跑就拉起一个并把查看器窗口开在它上面。所以每次开始作画前无条件跑一遍都没问题——永远不会出现第二个实例；窗口由程序自己开在桌面浏览器里（`--foreground` 让进程占住终端、日志直接可见；要换端口/重启，用 `paintress stop`）。在 WSL 里窗口落在 Windows 的浏览器，不会是发行版里的那个浏览器。
 
 agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在跑并把当前项目注册进去，MCP server 还会在每次写操作前再确认一遍——于是查看器是在第一次编辑之前就起来的，而不是等人开口。
 

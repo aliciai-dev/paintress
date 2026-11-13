@@ -7,6 +7,9 @@ import { daemonPid, queryDaemon, type DaemonInfo } from './client.js';
  * **幂等**：已经在跑就直接返回它的 pid/端口，绝不起第二个进程。
  * 这条保证是「agent 想画就先把 web 拉起来」的前提 —— 调用方可以每次都无条件调用。
  * 并发启动也安全：单实例锁保证只有一个 daemon 活下来，输掉竞争的一方复用它。
+ *
+ * 子进程跑的是 `paintress web --foreground`：裸 `paintress web` 已经是「ensure 完就返回」的
+ * 幂等形式，再拿它当子进程命令会递归。窗口由这个子进程自己弹（openBrowser）。
  */
 
 export interface EnsureDaemonResult {
@@ -63,7 +66,7 @@ export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<Ensu
 
   const entry = process.argv[1];
   if (!entry) throw new Error('无法确定 CLI 入口路径，不能后台启动 daemon');
-  const args = [entry, 'web'];
+  const args = [entry, 'web', '--foreground'];
   if (opts.port !== undefined) args.push('--port', String(opts.port));
   if (opts.idleTimeoutMs !== undefined) args.push('--idle', String(opts.idleTimeoutMs));
   if (opts.noOpen === true) args.push('--no-open');

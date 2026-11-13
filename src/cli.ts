@@ -41,7 +41,8 @@ import { VERSION } from './shared/version.js';
  *   paintress preset remove <dir> <key>               删一条预设
  *   paintress component list [dir]                    项目组件库列表
  *   paintress component insert <file> <id>            把组件复制进设计稿
- *   paintress web [--port n] [--idle ms] [--daemon]   确保 web 在跑（幂等：已在跑就复用）
+ *   paintress web [--port n] [--idle ms] [--foreground]  确保 web 在跑，立刻返回（幂等）
+ *   paintress web --foreground                       占住终端跑（日志直接可见）
  *   paintress ping                                    检查 web 是否在运行
  *   paintress status                                  查看已注册项目
  *   paintress watch <name> <dir>                      注册要跟踪的目录
@@ -61,8 +62,9 @@ export interface ParsedCommand {
 
 const NO_OPEN_FLAG = 'no-open';
 
-const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', NO_OPEN_FLAG]);
-const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'daemon', 'dry-run', 'force', NO_OPEN_FLAG]);
+const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', NO_OPEN_FLAG]);
+/** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
+const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', NO_OPEN_FLAG]);
 
 /** 纯函数：argv → 命令 + 位置参数 + 标志（可单测） */
 export function parseArgv(argv: string[]): ParsedCommand | null {
@@ -152,7 +154,7 @@ export async function main(argv: string[]): Promise<number> {
     // ---- web 控制面（不需要 <file>）----
     if (cmd === 'ping') {
       if (!isDaemonRunning()) {
-        console.log(JSON.stringify({ ok: false, running: false, hint: '未运行：paintress web --daemon' }));
+        console.log(JSON.stringify({ ok: false, running: false, hint: '未运行：paintress web' }));
         return 1;
       }
       const res = await sendRequest({ kind: 'ping' });
@@ -293,7 +295,10 @@ export async function main(argv: string[]): Promise<number> {
         );
         return 0;
       }
-      if (flags['daemon'] === true) {
+      // 默认形态 = 「打开查看器」：拉起后台 daemon，打印 pid/端口/URL，立刻返回。
+      // 窗口由 daemon 自己弹（openBrowser：WSL 里落到 Windows 宿主浏览器），
+      // 调用方（人也好 agent 也好）不需要知道浏览器在哪、也不用再补任何 flag。
+      if (flags['foreground'] !== true) {
         const res = await ensureDaemon({
           ...(port !== undefined ? { port } : {}),
           ...(idle !== undefined ? { idleTimeoutMs: idle } : {}),
@@ -308,6 +313,7 @@ export async function main(argv: string[]): Promise<number> {
         );
         return 0;
       }
+      // --foreground：占住终端，解绑/退出原因等日志直接可见（daemon 的子进程就是这么跑的）。
       let handle: DaemonHandle;
       try {
         handle = await startDaemon({

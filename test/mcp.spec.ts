@@ -54,11 +54,14 @@ describe('工具发现', () => {
     ]);
   });
 
-  it('连接说明里点名「作画前先确保查看器」且声明幂等', async () => {
+  it('连接说明里点名「作画前跑 paintress web」、声明幂等，并且不教 agent 自己开浏览器', async () => {
     const instructions = client.getInstructions() ?? '';
     expect(instructions).toContain('paintress_viewer');
-    expect(instructions).toContain('paintress web --daemon');
+    expect(instructions).toContain('paintress web');
     expect(instructions.toLowerCase()).toContain('idempotent');
+    // operator 2026-11-14：开窗口是程序的事；提示词里让 agent 去开浏览器，在 WSL 里必开错
+    expect(instructions).toContain('never launch a browser');
+    expect(instructions).not.toContain('paintress web --daemon');
   });
 });
 

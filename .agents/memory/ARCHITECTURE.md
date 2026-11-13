@@ -88,3 +88,13 @@
   3. 查看器只替换主色与强调色，不动中性色体系。
 - **后果**：金色在深蓝上对比度偏低，仅用于选中/高亮等局部强调；正文与小字仍用主色或中性色。
 - **日期**：2026-11-11
+
+### D-008 — 开窗口是程序的事；提示词只说「跑 paintress web」
+
+- **背景**（2026-11-14）：operator 让 AI 看 design 里的设计稿，viewer 起来了，但弹窗弹在 **WSL 内的 Linux 浏览器**里（WSLg 设了 `DISPLAY`，`xdg-open` 就走本地浏览器），不是 Windows 宿主浏览器。同时 skill / MCP instructions 里写着「把 URL 交给用户」「自己开窗口」这类提示，agent 照做只会更错。
+- **决定**：
+  1. **提示词只留一条**：作画前跑 `paintress web`，跑完就结束；不写「打开浏览器」「把 URL 给人」这类指令。窗口由程序自己开（像任何前端 dev server 的 `--open`）。
+  2. **WSL 下绝不回退 `xdg-open`**：`openBrowser` 按 `wslview` → `powershell.exe Start-Process` → `cmd.exe start` → `explorer.exe` 的顺序走 Windows interop；一个都没有就宁可不弹，也不弹到错的浏览器。
+  3. **`paintress web` 默认 = ensure 完立刻返回**；占住终端的形态是 `--foreground`（daemon 子进程用它，否则会递归）；`--daemon` 留作兼容别名。
+- **后果**：agent 侧只依赖一条命令，不再依赖「记 flag」「记怎么开窗」；窗口落在哪台机器由 `openBrowser` 一处决定（本机实测：WSL → Windows 默认浏览器 Firefox）。
+- **日期**：2026-11-14

@@ -107,7 +107,7 @@ describe('CLI web 幂等', () => {
     }
   }
 
-  it('前台 paintress web：已有实例时立即复用并退出 0', async () => {
+  it('裸 paintress web：已有实例时立即复用并退出 0（默认就是「ensure 完返回」）', async () => {
     const { code, out } = await run(['web']);
     expect(code).toBe(0);
     const res = JSON.parse(out) as { reused: boolean; pid: number; port: number };
@@ -116,7 +116,15 @@ describe('CLI web 幂等', () => {
     expect(res.port).toBe(daemon.port);
   });
 
-  it('paintress web --daemon：同样复用，不起第二个进程', async () => {
+  it('paintress web --foreground：同样复用，不起第二个进程', async () => {
+    const { code, out } = await run(['web', '--foreground']);
+    expect(code).toBe(0);
+    const res = JSON.parse(out) as { reused: boolean; pid: number };
+    expect(res.reused).toBe(true);
+    expect(res.pid).toBe(daemon.pid);
+  });
+
+  it('paintress web --daemon：历史别名仍然可用（等同于默认行为）', async () => {
     const { code, out } = await run(['web', '--daemon']);
     expect(code).toBe(0);
     const res = JSON.parse(out) as { daemon: boolean; reused: boolean; pid: number; http: string };

@@ -10,14 +10,18 @@ const SERVER_VERSION = VERSION;
 /**
  * 连接时交给客户端模型的使用说明（MCP initialize 的 instructions）。
  * 头号规则是「作画前把查看器拉起来」——人看不到进程状态，agent 不等提醒就该做。
+ *
+ * 写法纪律（operator 2026-11-14）：**只说「跑 `paintress web`」就结章**。
+ * 不开窗、不指 URL、不让人去打开浏览器 —— 窗口是程序的事（openBrowser），
+ * 提示词里多一句「你自己去开浏览器」就必然会在 WSL 里开到错的那一个。
  */
 const INSTRUCTIONS = `paintress is a design tool for AI agents: design files are JSON, edited through tools and rendered by a local viewer.
 
-VIEWER — the human only sees your work in the viewer, so keep it running:
-- Call \`paintress_viewer\` before the first write of a drawing session (creating, editing or showing a design) — do not wait to be asked.
-- It is idempotent: if the viewer is already up it returns the existing pid/port/URL and starts nothing; calling it again is always safe and never starts a second process.
-- CLI equivalent, same idempotence: \`paintress web --daemon\` returns immediately with the URL. Never block on plain \`paintress web\`.
-- Hand the returned URL to the human (append \`?file=<relative path>\` to deep-link one document). Never ask them to start the viewer or run \`watch\`.
+VIEWER — the human only sees your work in the viewer:
+- Run \`paintress web\` before the first write of a drawing session (creating, editing or showing a design) — do not wait to be asked. It ensures the viewer is running and returns immediately.
+- The window is the command's job, not yours: never launch a browser or start a process for it.
+- It is idempotent: if the viewer is already up it prints the existing pid/port/URL and exits; calling it again is safe and never starts a second process.
+- MCP equivalent: \`paintress_viewer\` returns the same URL. Append \`?file=<relative path>\` to deep-link one document.
 
 WORKFLOW: \`paintress_new\` → \`paintress_query\`/\`paintress_get\` for real node ids (never invent them) → \`paintress_update\`/\`insert\`/\`move\`/\`delete\` or \`paintress_batch\` → \`paintress_validate\` → \`paintress_screenshot\` to check the result with your own eyes.
 \`#1\` in the conversation is a click marker from the viewer: resolve it with \`paintress_marks\`.`;
@@ -110,7 +114,7 @@ async function ensureViewerQuiet(): Promise<void> {
 async function registerSelf(): Promise<void> {
   const res = await autoRegister();
   if (res) {
-    process.stderr.write(`paintress: 已注册项目 "${res.project}"，浏览器打开 ${res.url}\n`);
+    process.stderr.write(`paintress: 已注册项目 "${res.project}"（${res.url}）\n`);
   }
 }
 
