@@ -44,6 +44,24 @@
 **2026-11-14 收口：A1–A3、C1–C3、B1–B6 全部落地**（质量基线：双端 `tsc` 0 错误、27 文件 350 用例全绿、`pnpm build` 通过）。
 摘要见 `.agents/memory/FINISHED.md`；决策见 `ARCHITECTURE.md#D-010`。
 
+## 下一批次（2026-11-15）：Stage D 设计系统引导 + Stage F 字体
+
+> 规格：`specs/design-system.md`（D）、`specs/fonts.md`（F，含 operator 五条决策原文）。进度只在 todo 工具里。
+> 两批合流是因为 D0 的字号 token、D4 的 seed 字体、D5 的提示词都与字体耦合；
+> 硬拆成「先 D 后 F」会在 D4/D5 返工。
+
+| 序 | 单元 | 规格 | 出口（验收摘要） |
+| --- | --- | --- | --- |
+| 1 | D0 字号 token + 引用类型校验 | `design-system.md#D0` | `establish` 不再毁字号；`fill:$radius-8` 类错配在 validate 出 warning |
+| 2 | F1 字体注册表 + validate + `paintress_font` | `fonts.md#8` | family 未登记 / system 无 preview 出 warning；add 校验路径与文件存在 |
+| 3 | F2 渲染注入 + `defaultFont` + 缺口提示进 MCP | `fonts.md#8` | 项目字体在 `/render` 生效；无 family 的文本用 default，且 `doc_info`/`validate`/`get`/写路径都看得见 `gaps` |
+| 4 | D4 预设种子（带字体登记） | `design-system.md#D4` | 27 token + 6 组，`font-sans`/`font-mono` 带 source 与 preview，`fonts.default` 指向 `font-ui` |
+| 5 | D1 / D2 / D3 | `design-system.md#D1`… | 漂移提示、设计系统状态（带 fonts 概要）、组件上收 |
+| 6 | F3 查看器探针 + 徽章 | `fonts.md#8` | 缺字体 / 用了替代在界面上可见，属性面板标解析值 |
+| 7 | F4 截图等字体 + 报告 | `fonts.md#8` | `fonts.ready` 后才测量；结果含 loaded/missing/substituted |
+| 8 | D5 / D6 | `design-system.md#D5`… | 提示词落位（含字体决策树）、README 双语与文档漂移测试 |
+| 9 | F5 度量覆盖 + `--embed-fonts` | `fonts.md#8` | 替代字体行高接近真字体；导出脱离项目也能显示 |
+
 ## 未决问题
 
 - **dts 生成被禁用（债务）**：zod passthrough 推断类型超过 TS 序列化上限（TS7056，实测定位在 `src/schema/nodes.ts:209` 的 `NodeSchema`）。2026-11-11 实验：只给 `NodeSchema` 加显式注解即可通过构建，但 `index.d.ts` 达 1548 KB（包体从 164 KB → 1.67 MB），故 0.1.0 不发类型产物；要发需先给全部导出 schema 显式注解瘦身，或按需导出 + api-extractor。

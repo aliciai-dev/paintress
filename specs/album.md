@@ -20,7 +20,8 @@ tokens（谱值）  ←  presets（谱式）  ←  components（谱件）  ←  
 
 ## 存储（本轮默认，开工前可推翻）
 
-- **tokens**：就是 `__preset.ptr` 的 `variables`（已存在）。分类复用 `x-paintress.presets.items[key].type`，扩展 `color | radius | spacing | font | other`；
+- **tokens**：就是 `__preset.ptr` 的 `variables`（已存在）。分类复用 `x-paintress.presets.items[key].type`，
+  种类为 `color | radius | spacing | fontSize | font`（2026-11-15 裁决：`fontSize` 单列、去掉 `other`，见 `specs/design-system.md#D0`）；
   缺省由变量 `type` 推导（color→color，number→radius，string→font）。`kind` 不强制。
 - **presets**：`x-paintress.presets.groups.<name> = { target: '<nodeType>', props: { fill: '$color-brand', cornerRadius: '$radius-md' } }`。
   `props` 的值必须是 `$token` 引用（裸值 → validate 警告）。
