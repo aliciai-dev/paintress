@@ -261,10 +261,38 @@ function panelVars(fileAbs: string): Record<string, string> {
   return out;
 }
 
+/** 字体报告：查看器 iframe 探针 + 截图共用；只存最近一次，daemon 退出即清空 */
+export interface FontReport {
+  project: string;
+  path: string;
+  checked: string[];
+  missing: string[];
+  substituted: string[];
+  at: number;
+  source: 'viewer' | 'shot';
+}
+
+export class FontReportStore {
+  private readonly byFile = new Map<string, FontReport>();
+
+  set(project: string, path: string, report: Omit<FontReport, 'project' | 'path' | 'at'>): void {
+    this.byFile.set(`${project}\u0000${path}`, { ...report, project, path, at: Date.now() });
+  }
+
+  get(project: string, path: string): FontReport | undefined {
+    return this.byFile.get(`${project}\u0000${path}`);
+  }
+
+  list(project: string): FontReport[] {
+    return [...this.byFile.values()].filter((r) => r.project === project);
+  }
+}
+
 export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
   const releaseLock = acquireLock();
   const registry = new Registry();
   const marks = new MarksStore();
+  const fontReports = new FontReportStore();
   const changes = new ChangesStore();
   const watchers = new WatchManager();
   const versions = new VersionChecker();
@@ -425,6 +453,9 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 projects: registry.all().map((p) => registry.info(p)),
                 version: VERSION,
               });
+              break;
+            case 'fonts':
+              reply({ ok: true, reports: fontReports.list(req.project) });
               break;
             case 'watch': {
               everHadProjects = true;
@@ -610,6 +641,42 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             setTimeout(() => void shutdown('web 界面关闭'), 0).unref?.();
           });
           sendJson(200, { ok: true, shutdown: true, connections: connectionCount() });
+          return;
+        }
+        if (segments[1] === 'fonts' && segments.length === 2) {
+          const qProject = url.searchParams.get('project') ?? '';
+          const qFile = url.searchParams.get('path') ?? '';
+          if (req.method === 'POST') {
+            // 查看器 iframe 的探针结果：只读，不改设计稿
+            const raw = await readBody();
+            let body: Record<string, unknown>;
+            try {
+              body = JSON.parse(raw) as Record<string, unknown>;
+            } catch {
+              sendJson(400, { ok: false, error: '请求体不是合法 JSON' });
+              return;
+            }
+            const project = typeof body['project'] === 'string' ? body['project'] : qProject;
+            const path = typeof body['path'] === 'string' ? body['path'] : qFile;
+            if (project === '' || path === '') {
+              sendJson(400, { ok: false, error: '缺少 project / path' });
+              return;
+            }
+            if (!registry.get(project)) {
+              sendJson(404, { ok: false, error: `未注册的项目：${project}` });
+              return;
+            }
+            const checked = Array.isArray(body['checked']) ? body['checked'].map(String) : [];
+            const missing = Array.isArray(body['missing']) ? body['missing'].map(String) : [];
+            fontReports.set(project, path, { checked, missing, substituted: [], source: 'viewer' });
+            sendJson(200, { ok: true });
+            return;
+          }
+          if (req.method !== 'GET') {
+            sendJson(405, { ok: false, error: '不支持的方法' });
+            return;
+          }
+          sendJson(200, { ok: true, reports: fontReports.list(qProject) });
           return;
         }
         if (segments[1] === 'changes') {
@@ -993,6 +1060,11 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           .map(encodeURIComponent)
           .join('/')}${dir ? '/' : ''}`;
         let html = rendered.html.replace('<head>', `<head>\n<base href="${baseHref}">`);
+        // 字体探针把结果写回 daemon，供 paintress_font list 读取
+        if (url.searchParams.get('embed') === '1') {
+          const fontApi = `/api/fonts?project=${encodeURIComponent(entry.name)}&path=${encodeURIComponent(relPath)}`;
+          html = html.replace('</head>', `<script>window.PAINTRESS_FONT_URL=${JSON.stringify(fontApi)}</script>\n</head>`);
+        }
         // iframe 嵌入（embed=1）时由父页面订阅 SSE；直接访问时恢复自刷新（旧行为）
         if (url.searchParams.get('embed') !== '1') {
           const liveScript = `<script>\n(function(){\n  var es = new EventSource('/events?project=${encodeURIComponent(entry.name)}&path=${encodeURIComponent(relPath)}');\n  es.addEventListener('change', function(){ location.reload(); });\n})();\n</script>`;

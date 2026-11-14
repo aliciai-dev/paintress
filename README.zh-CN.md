@@ -18,7 +18,7 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 
 | 组成 | 作用 |
 | --- | --- |
-| MCP 工具 | paintress_viewer、paintress_new、paintress_doc_info、paintress_query、paintress_get、paintress_update、paintress_insert、paintress_delete、paintress_move、paintress_batch、paintress_validate、paintress_preset、paintress_font、paintress_audit、paintress_establish、paintress_adjust、paintress_component、paintress_render、paintress_screenshot、paintress_marks |
+| MCP 工具 | paintress_viewer、paintress_new、paintress_doc_info、paintress_query、paintress_get、paintress_update、paintress_insert、paintress_delete、paintress_move、paintress_batch、paintress_validate、paintress_convert、paintress_preset、paintress_font、paintress_audit、paintress_establish、paintress_adjust、paintress_component、paintress_render、paintress_screenshot、paintress_marks |
 | CLI | 同样的操作，外加查看器进程；不接 agent 也能用 |
 | 查看器 | 本地 web 服务：渲染设计稿、高亮变更、把点击的节点变成 `#1`、`#2`… |
 | 截图 | 整张画布或单个画板的 PNG；倍率 0.2–2、默认 0.8，单边最多 8192px |
@@ -62,6 +62,7 @@ paintress new <file> [--name n] [--width n] [--height n] [--fill c]
                     [--layout vertical|horizontal|none] [--padding n] [--gap n] [--force]
                                                           新建设计稿（一个空画板）
 paintress info <file>                                     文档摘要
+paintress convert <file.pen> [out.ptr] [--force]         把 .pen 转成 .ptr（源文件不动）
 paintress query <file> [--type t] [--name n|--regex]   条件查询节点
 paintress get <file> <id> [--depth n]                  读取节点子树
 paintress update <file> <id> '<patch-json>'            浅合并更新属性
@@ -164,7 +165,7 @@ paintress mcp-config cursor   # 只打印片段，不改文件
 - `.agents/memory/ARCHITECTURE.md` —— 设计决策与理由
 - `.agents/implementations/` —— 每次变更的记录与实测数据
 
-已有的 `.pen` 设计稿也能直接打开，原样渲染。
+已有的 `.pen` 设计稿也能直接打开，原样渲染；需要时 `paintress convert` 把它转成 `.ptr`。
 
 ## 发版（维护者）
 

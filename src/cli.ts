@@ -25,6 +25,7 @@ import { VERSION } from './shared/version.js';
  * 用法：
  *   paintress mcp                                    启动 stdio MCP server
  *   paintress new <file> [--name n] [--width n] [--height n] [--fill c] [--layout l] [--force]
+ *   paintress convert <file.pen> [out.ptr] [--force]   把 .pen 转成 .ptr（源文件不动）
  *   paintress info <file>
  *   paintress query <file> [--type t] [--name n] [--regex] [--id i] [--reusable]
  *   paintress get <file> <id> [--depth n]
@@ -33,7 +34,7 @@ import { VERSION } from './shared/version.js';
  *   paintress delete <file> <id>
  *   paintress move <file> <id> <parent> [--index n]
  *   paintress batch <file> '<ops-json>'
- *   paintress render <file> <out.html>
+ *   paintress render <file> <out.html> [--embed-fonts]
  *   paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]   (缺省 0.8)
  *   paintress validate <file>
  *   paintress audit <file>                            画谱审计（只读）
@@ -48,6 +49,7 @@ import { VERSION } from './shared/version.js';
  *   paintress preset remove <dir> <key>               删一条预设
  *   paintress component list [dir]                    项目组件库列表
  *   paintress component insert <file> <id>            把组件复制进设计稿
+ *   paintress component add <file> <id>               把设计稿子树上收为组件
  *   paintress web [--port n] [--idle ms] [--foreground]  确保 web 在跑，立刻返回（幂等）
  *   paintress web --foreground                       占住终端跑（日志直接可见）
  *   paintress ping                                    检查 web 是否在运行
@@ -69,9 +71,9 @@ export interface ParsedCommand {
 
 const NO_OPEN_FLAG = 'no-open';
 
-const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', 'preview', 'note', 'metrics', NO_OPEN_FLAG]);
+const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', 'preview', 'note', 'metrics', 'embed-fonts', NO_OPEN_FLAG]);
 /** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
-const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', 'apply', NO_OPEN_FLAG]);
+const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', 'apply', 'embed-fonts', NO_OPEN_FLAG]);
 
 /** 纯函数：argv → 命令 + 位置参数 + 标志（可单测） */
 export function parseArgv(argv: string[]): ParsedCommand | null {
@@ -411,7 +413,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!a1 || !a2) throw new Error('用法：paintress preset remove <dir> <key>');
         out = await call('paintress_preset', { action: 'remove', path: a1, key: a2 });
       } else {
-        throw new Error(`未知 preset 动作：${action}（list / set / remove / set-group / remove-group）`);
+        throw new Error(`未知 preset 动作：${action}（list / set / remove / seed / set-group / remove-group）`);
       }
       console.log(JSON.stringify(out, null, 2));
       return 0;
@@ -426,6 +428,16 @@ export async function main(argv: string[]): Promise<number> {
           action: 'insert',
           path: a1,
           id: a2,
+          ...(flagStr(flags, 'parent') !== undefined ? { parent: flagStr(flags, 'parent') } : {}),
+          ...(flagNum(flags, 'index') !== undefined ? { index: flagNum(flags, 'index') } : {}),
+        });
+      } else if (action === 'add') {
+        if (!a1 || !a2) throw new Error('用法：paintress component add <file> <id> [--name 名称] [--parent p] [--index n]');
+        out = await call('paintress_component', {
+          action: 'add',
+          path: a1,
+          id: a2,
+          ...(flagStr(flags, 'name') !== undefined ? { name: flagStr(flags, 'name') } : {}),
           ...(flagStr(flags, 'parent') !== undefined ? { parent: flagStr(flags, 'parent') } : {}),
           ...(flagNum(flags, 'index') !== undefined ? { index: flagNum(flags, 'index') } : {}),
         });
@@ -476,6 +488,16 @@ export async function main(argv: string[]): Promise<number> {
       } else {
         throw new Error(`未知 font 动作：${action}（list / add / remove / default）`);
       }
+      console.log(JSON.stringify(out, null, 2));
+      return 0;
+    }
+
+    if (cmd === 'convert') {
+      out = await call('paintress_convert', {
+        path: file,
+        ...(a1 !== undefined ? { out: a1 } : {}),
+        ...(flags['force'] === true ? { overwrite: true } : {}),
+      });
       console.log(JSON.stringify(out, null, 2));
       return 0;
     }
@@ -562,7 +584,11 @@ export async function main(argv: string[]): Promise<number> {
         break;
       case 'render': {
         if (!a1) throw new Error('缺少 <out.html> 参数');
-        out = await call('paintress_render', { path: file, out: a1 });
+        out = await call('paintress_render', {
+          path: file,
+          out: a1,
+          ...(flags['embed-fonts'] === true ? { embedFonts: true } : {}),
+        });
         break;
       }
       case 'audit': {

@@ -102,22 +102,25 @@ function quoteFamily(family: string): string {
  * 已经出现过的 family 不重复加（先出现的那一层优先，语义与 CSS 一致）。
  */
 export function stackWithPreviews(stack: string, previews: Record<string, string>): string {
-  const out: string[] = [];
+  const production = splitFontStack(stack);
   const seen = new Set<string>();
+  const out: string[] = [];
   const push = (family: string): void => {
     const key = family.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
     out.push(quoteFamily(family));
   };
-  const production = splitFontStack(stack);
-  for (const family of production) push(family);
+  // 替代紧跟它替代的真字体：原先的「先排完真字体、再排替代」会把 A 的替代挤到 B 后面
   for (const family of production) {
+    push(family);
     const preview = previews[family];
     if (preview === undefined) continue;
     for (const entry of splitFontStack(preview)) push(entry);
   }
-  if (!out.some((family) => isGenericFamily(family.replace(/^["']|["']$/g, '')))) out.push('sans-serif');
+  // 已经显式写了 generic 兜底就不再补；原实现按「含空格就加引号」拆完再判 generic，
+  // 会把 system-ui 误判成普通 family 并重复追加 sans-serif
+  if (!production.some((family) => isGenericFamily(family))) out.push('sans-serif');
   return out.join(', ');
 }
 
@@ -137,7 +140,9 @@ export function fontRegistryOf(doc: unknown): FontRegistry {
     if (!isRecord(raw)) continue;
     const sourceRaw = isRecord(raw['source']) ? raw['source'] : undefined;
     if (sourceRaw === undefined || !isFontSourceKind(sourceRaw['kind'])) continue;
-    const target = typeof sourceRaw['target'] === 'string' ? sourceRaw['target'] : undefined;
+    // target 是规范键；url / path 是老字段的兼容别名
+    const candidates = [sourceRaw['target'], sourceRaw['url'], sourceRaw['path']];
+    const target = candidates.find((v): v is string => typeof v === 'string');
     const source: FontSource = { kind: sourceRaw['kind'], ...(target !== undefined ? { target } : {}) };
     const metricsRaw = isRecord(raw['metrics']) ? raw['metrics'] : undefined;
     const metrics: FontMetrics = {};

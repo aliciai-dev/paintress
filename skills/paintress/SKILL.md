@@ -38,6 +38,7 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 | --- | --- |
 | `paintress_viewer` | **ensure the viewer is up** and register the project; idempotent |
 | `paintress_new` | **create a design file.** Writes a valid document with one empty board; returns the `boardId`. Refuses to overwrite; a `path` without an extension gets the default one |
+| `paintress_convert` | convert a `.pen` file to `.ptr` (fresh `fileToken` + metadata; source untouched; refuses to overwrite) |
 | `paintress_doc_info` | document summary: version, format flavor, node counts, variables, top-level nodes |
 | `paintress_query` | find nodes by type / name (exact or regex) / id / reusable |
 | `paintress_get` | fetch one node's subtree; `depth` controls how far down |

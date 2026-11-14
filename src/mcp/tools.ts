@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc, type DocFlavor } from '../doc/io.js';
 import { createDoc } from '../doc/create.js';
 import { collectIds, genId } from '../doc/id.js';
@@ -100,6 +101,25 @@ function notifyChanges(path: string, ids: string[]): void {
   void sendRequest({ kind: 'changes', path: resolve(path), ids }, 2000).catch(() => {
     /* 高亮是尽力而为，失败不影响写入结果 */
   });
+}
+
+/** 最近一次字体探针报告（viewer + 截图都写进 daemon）；daemon 没跑就返回空 */
+async function fetchFontReports(path: string): Promise<{ path: string; checked: string[]; missing: string[] }[]> {
+  if (!isDaemonRunning()) return [];
+  // 项目名与自动注册一致：目录的最后两段（web/paths.ts#deriveProjectName）
+  const root = findProjectRoot(path) ?? resolve(path);
+  const parts = root.split('/');
+  const name = parts.slice(-2).join('/');
+  try {
+    const res = (await sendRequest({ kind: 'fonts', project: name }, 2000)) as {
+      ok: boolean;
+      reports?: { path: string; checked: string[]; missing: string[] }[];
+    };
+    if (!res.ok) return [];
+    return (res.reports ?? []).map((r) => ({ path: r.path, checked: r.checked, missing: r.missing }));
+  } catch {
+    return [];
+  }
 }
 
 /** 当前设计系统概览：token 计数、preset 组、字体、组件、字体缺口 */
@@ -409,13 +429,16 @@ export const TOOLS: Record<string, ToolDef> = {
     inputSchema: { path: z.string(), id: z.string(), depth: z.number().int().min(0).optional() },
     run: (a) =>
       read(reqStr(a, 'path'), (ctx) => {
+        const filePath = reqStr(a, 'path');
         const res = g(ctx.doc, reqStr(a, 'id'), optNum(a, 'depth') ?? Infinity);
         if (!res) throw new Error(`节点不存在：${reqStr(a, 'id')}`);
         // 文本节点没写字体：给一条 hint，让 agent 决定要不要补（不阻断）
         if (res !== null && typeof res === 'object' && !Array.isArray(res)) {
           const rec = res as Record<string, unknown>;
           if (rec['type'] === 'text' && (typeof rec['fontFamily'] !== 'string' || rec['fontFamily'].trim() === '')) {
-            return { ...rec, hint: '这个 text 节点没有 fontFamily，正在用默认字体；补一个 $font-* 或 family' };
+            const fonts = listPresets(filePath).items.filter((item) => item.type === 'font').map((item) => item.key);
+            const suggest = fonts.length > 0 ? fonts.map((key) => `$${key}`).join(' / ') : '先 paintress_preset set 一个 font token';
+            return { ...rec, hint: `这个 text 节点没有 fontFamily，正在用默认字体；补一个 ${suggest} 或 family` };
           }
         }
         return res;
@@ -601,12 +624,24 @@ export const TOOLS: Record<string, ToolDef> = {
         .describe('Metrics overrides for the substitute (CSS font metrics overrides)'),
       value: z.string().optional().describe('For default: a font token key or a family'),
     },
-    run: (a) => {
+    run: async (a) => {
       const from = resolve(optStr(a, 'path') ?? process.cwd());
       const action = optStr(a, 'action') ?? 'list';
       if (action === 'list') {
         const { path, registry } = projectFontRegistry(from);
-        return { ok: true, path, ...registry };
+        const reports = await fetchFontReports(from);
+        const missing = new Set(reports.flatMap((r) => r.missing));
+        const families = Object.fromEntries(
+          Object.entries(registry.families).map(([family, entry]) => [
+            family,
+            {
+              ...entry,
+              status: missing.has(family) ? 'missing' : 'loaded',
+              missingIn: reports.filter((r) => r.missing.includes(family)).map((r) => r.path),
+            },
+          ]),
+        );
+        return { ok: true, path, ...registry, families, reports };
       }
       if (action === 'remove') {
         return { ok: true, ...removeFontEntry(from, reqStr(a, 'family')) };
@@ -787,6 +822,47 @@ export const TOOLS: Record<string, ToolDef> = {
           ...(existing.length > 0 ? { existing } : {}),
         };
       });
+    },
+  },
+
+  paintress_convert: {
+    description:
+      'Convert a .pen design file to .ptr (the paintress flavor): reads, validates and writes a new .ptr file with a fresh fileToken and x-paintress metadata. Does not modify the source; refuses to overwrite unless overwrite=true. The two flavors are identical today, but .ptr may evolve.',
+    inputSchema: {
+      path: z.string().describe('Source .pen path'),
+      out: z.string().optional().describe('Target .ptr path; defaults to the source with .ptr extension'),
+      overwrite: z.boolean().optional().describe('Overwrite an existing target (default false)'),
+    },
+    run: (a) => {
+      const source = reqStr(a, 'path');
+      if (!source.toLowerCase().endsWith('.pen')) throw new Error(`source must be a .pen file, got: ${source}`);
+      const target = optStr(a, 'out') ?? source.replace(/\.pen$/i, '.ptr');
+      if (resolve(target) === resolve(source)) throw new Error('Target must differ from the source');
+      if (existsSync(target) && optBool(a, 'overwrite') !== true) {
+        throw new Error(`Target exists, not overwritten: ${target} (pass overwrite=true to replace it)`);
+      }
+      const loaded = loadDoc(source);
+      if (!loaded.validation.ok) {
+        throw new Error(
+          `Source fails validation, nothing written:\n${loaded.validation.errors.map((e) => `  ${e.path}: ${e.message}`).join('\n')}`,
+        );
+      }
+      const meta = (loaded.doc as Record<string, unknown>)['x-paintress'];
+      const doc: PenDocument = {
+        ...loaded.doc,
+        fileToken: randomUUID(),
+        ...(meta !== undefined ? {} : { ['x-paintress']: { spec: '1' } }),
+      } as PenDocument;
+      saveDoc(target, doc, { flavor: 'ptr', createOnly: optBool(a, 'overwrite') !== true });
+      return {
+        ok: true,
+        source,
+        out: target,
+        fileToken: doc.fileToken,
+        version: doc.version,
+        nodeCount: doc.children.length,
+        warnings: loaded.validation.warnings,
+      };
     },
   },
 

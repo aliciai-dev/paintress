@@ -224,3 +224,12 @@
 - 提示词：MCP `INSTRUCTIONS` 增设计系统段，20 个工具描述与 48 个参数说明改英文；SKILL/README 双语与 `TERMS.md` 同步；`test/docs.spec.ts` 锁文档。
 - 质量基线：双端 `tsc` 0 错误、**30 文件 394 用例全绿**、`pnpm build` 通过。
 - 证据：`.agents/implementations/2026-11-15_0101_fontsize-token.md`、`2026-11-15_0132_font-registry.md`、`2026-11-15_0132_design-system-guidance.md`；决策 `ARCHITECTURE.md#D-011`。
+
+### 评审修复：字体栈顺序、查看器报告、CLI 接线、pen→ptr（2026-11-15）
+
+- 替代字体紧跟它替代的真字体；generic 判断不再误判 `system-ui`。
+- 查看器探针写回 daemon，`paintress_font list` 返回 loaded/missing 与来源稿。
+- CLI 补齐 `component add`、`preset seed`、`font`、`render --embed-fonts`。
+- 新增 `paintress_convert`（MCP + CLI）：`.pen` → `.ptr`，新 fileToken，源文件不动。
+- 质量基线：双端 `tsc` 0 错误、30 文件 397 用例全绿。
+- 证据：`.agents/implementations/2026-11-15_0145_font-review-fixes.md`。

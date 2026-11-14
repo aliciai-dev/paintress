@@ -18,7 +18,7 @@ The agent does the reading and writing, through MCP tools or the CLI. The browse
 
 | Part | Purpose |
 | --- | --- |
-| MCP tools | paintress_viewer, paintress_new, paintress_doc_info, paintress_query, paintress_get, paintress_update, paintress_insert, paintress_delete, paintress_move, paintress_batch, paintress_validate, paintress_preset, paintress_font, paintress_audit, paintress_establish, paintress_adjust, paintress_component, paintress_render, paintress_screenshot, paintress_marks |
+| MCP tools | paintress_viewer, paintress_new, paintress_doc_info, paintress_query, paintress_get, paintress_update, paintress_insert, paintress_delete, paintress_move, paintress_batch, paintress_validate, paintress_convert, paintress_preset, paintress_font, paintress_audit, paintress_establish, paintress_adjust, paintress_component, paintress_render, paintress_screenshot, paintress_marks |
 | CLI | the same operations plus the viewer process, for use without an agent |
 | Viewer | local web server: renders a document, highlights changes, hands back clicked nodes as `#1`, `#2`, … |
 | Screenshot | PNG of a canvas or one board; scale 0.2–2 (default 0.8), either edge capped to 8192px |
@@ -62,6 +62,7 @@ paintress new <file> [--name n] [--width n] [--height n] [--fill c]
                       [--layout vertical|horizontal|none] [--padding n] [--gap n] [--force]
                                                            create a design file (one empty board)
 paintress info <file>                                      document summary
+paintress convert <file.pen> [out.ptr] [--force]          convert .pen to .ptr (source untouched)
 paintress query <file> [--type t] [--name n|--regex]    find nodes
 paintress get <file> <id> [--depth n]                   read a node subtree
 paintress update <file> <id> '<patch-json>'             shallow-merge attributes
@@ -168,7 +169,7 @@ paintress mcp-config cursor   # print the exact snippet instead of editing files
 - `.agents/memory/ARCHITECTURE.md` — design decisions and their rationale
 - `.agents/implementations/` — per-change records with measurements
 
-paintress also opens existing `.pen` design files as-is.
+paintress also opens existing `.pen` design files as-is; `paintress convert` turns one into `.ptr` when you ask for it.
 
 ## Release (maintainers)
 

@@ -102,7 +102,7 @@ function fontLoaderScript(links: string[]): string {
  */
 function probeScript(families: string[]): string {
   if (families.length === 0) return '';
-  const payload = JSON.stringify(families).replace(/</g, '\\u003c');
+  const payload = JSON.stringify(families).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (ch) => '\\u' + ch.charCodeAt(0).toString(16));
   return [
     '<script type="application/json" id="ptr-fonts">',
     payload,
@@ -118,7 +118,7 @@ function probeScript(families: string[]): string {
     'function missing(){var sb=w("__paintress_missing__","serif"),mb=w("__paintress_missing__","monospace");',
     'var out=[];for(var i=0;i<families.length;i++){var f=families[i];',
     'if(Math.abs(w(f,"serif")-sb)<0.5&&Math.abs(w(f,"monospace")-mb)<0.5)out.push(f)}return out}',
-    'function send(){window.parent.postMessage({type:"paintress-fonts",checked:families,missing:missing()},"*")}',
+    'function send(){var m=missing();var data={type:"paintress-fonts",checked:families,missing:m};window.parent.postMessage(data,"*");if(window.PAINTRESS_FONT_URL){fetch(window.PAINTRESS_FONT_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({checked:families,missing:m})}).catch(function(){})}}',
     'Promise.resolve(window.__paintressFontsReady).then(function(){setTimeout(send,50)});',
     '})();',
     '</script>',

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -142,8 +142,13 @@ describe('渲染计划', () => {
 
   it('栈拼接：真字体在前、替代在后、generic 兜底，不重复', () => {
     expect(stackWithPreviews('Inter, Inter', { Inter: 'Noto Sans SC' })).toBe('Inter, "Noto Sans SC", sans-serif');
+    // 替代紧跟它替代的真字体：不能越过栈里已有的兜底 family
     expect(stackWithPreviews('Inter, sans-serif', { Inter: 'Noto Sans SC' })).toBe(
-      'Inter, sans-serif, "Noto Sans SC"',
+      'Inter, "Noto Sans SC", sans-serif',
+    );
+    // 显式写了 generic 就不再追加；system-ui 也算 generic，不能被误判成普通 family
+    expect(stackWithPreviews('Inter, system-ui', { Inter: 'Noto Sans SC' })).toBe(
+      'Inter, "Noto Sans SC", system-ui',
     );
   });
 });
@@ -264,5 +269,50 @@ describe('MCP：写入提示与设计系统概览', () => {
     expect(info.designSystem.tokens.color).toBeGreaterThan(0);
     expect(info.designSystem.fonts.families.length).toBe(1);
     expect(info.designSystem.gaps.textNodes).toBeGreaterThan(0);
+  });
+});
+
+describe('pen → ptr 转换', () => {
+  it('把 .pen 转成 .ptr：新 fileToken、x-paintress 元数据、源文件不动', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'paintress-convert-'));
+    try {
+      const source = join(dir, 'a.pen');
+      const target = join(dir, 'a.ptr');
+      const original = {
+        version: '2.22',
+        fileToken: '00000000-0000-4000-8000-0000000000ab',
+        variables: {},
+        children: [{ type: 'frame', id: 'b', name: 'Board', width: 100, height: 100 }],
+      };
+      writeFileSync(source, JSON.stringify(original));
+      const before = readFileSync(source, 'utf8');
+
+      const res = (await TOOLS['paintress_convert']!.run({ path: source })) as {
+        out: string;
+        fileToken: string;
+        version: string;
+      };
+      expect(res.out).toBe(target);
+      expect(res.fileToken).not.toBe(original.fileToken);
+      expect(res.version).toBe('2.22');
+      expect(readFileSync(source, 'utf8')).toBe(before);
+
+      const written = JSON.parse(readFileSync(target, 'utf8')) as Record<string, unknown>;
+      expect(written['fileToken']).toBe(res.fileToken);
+      expect(written['x-paintress']).toMatchObject({ spec: '1' });
+      expect(written['children']).toEqual(JSON.parse(JSON.stringify(original.children)));
+
+      // 默认拒绝覆盖；--force 才替换
+      expect(() => TOOLS['paintress_convert']!.run({ path: source })).toThrow(/exists/);
+      const again = (await TOOLS['paintress_convert']!.run({ path: source, overwrite: true })) as { out: string };
+      expect(again.out).toBe(target);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('非 .pen 源文件与源=目标都被拒绝', async () => {
+    expect(() => TOOLS['paintress_convert']!.run({ path: 'a.ptr' })).toThrow(/\.pen/);
+    expect(() => TOOLS['paintress_convert']!.run({ path: 'a.pen', out: 'a.pen' })).toThrow(/differ/);
   });
 });

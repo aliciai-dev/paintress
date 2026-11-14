@@ -1,6 +1,6 @@
 # 字体（v2）：责任边界、注册表、默认字体与缺口提示
 
-- 状态：**全部实现**（2026-11-15，F1–F5）；记录见 `.agents/implementations/2026-11-15_0132_font-registry.md`。v1 的五问已由 operator 定案，见 §0。
+- 状态：**全部实现**（2026-11-15，F1–F5）；记录见 `.agents/implementations/2026-11-15_0132_font-registry.md`、`2026-11-15_0145_font-review-fixes.md`。v1 的五问已由 operator 定案，见 §0。
 - 基线：`master` 干净，双端 `tsc` 0 错误、28 文件 371 用例全绿（2026-11-15）。
 - 取代：本文件 v1 中「字体文件放哪 / git 多大 / 授权判定」的全部建议（已删）。
 
