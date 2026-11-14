@@ -9,6 +9,8 @@ export interface Mark {
   /** 短号，从 1 递增（全局，跨项目不重复） */
   shortId: number;
   project: string;
+  /** 设计稿相对路径（点击时所在文件）；节点 id 只在文件内唯一，缺了它就无法唯一定位 */
+  file?: string;
   nodeId: string;
   name?: string;
   type?: string;
@@ -20,6 +22,7 @@ export interface Mark {
 /** 创建标记的入参 */
 export interface MarkInput {
   project: string;
+  file?: string;
   nodeId: string;
   name?: string;
   type?: string;

@@ -813,6 +813,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             const mark = marks.add({
               project: projectIn,
               nodeId,
+              ...(typeof body['file'] === 'string' && body['file'] !== '' ? { file: body['file'] } : {}),
               ...(typeof body['name'] === 'string' ? { name: body['name'] } : {}),
               ...(typeof body['type'] === 'string' ? { type: body['type'] } : {}),
               ...(typeof body['path'] === 'string' ? { path: body['path'] } : {}),
@@ -822,7 +823,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           }
           if (req.method === 'DELETE') {
             const nodeId = url.searchParams.get('nodeId');
-            const cleared = nodeId ? (marks.remove(qProject, nodeId) ? 1 : 0) : marks.clear(qProject);
+            const file = url.searchParams.get('file') ?? undefined;
+            const cleared = nodeId ? (marks.remove(qProject, nodeId, file) ? 1 : 0) : marks.clear(qProject);
             sendJson(200, { ok: true, cleared });
             return;
           }

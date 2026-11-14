@@ -953,9 +953,11 @@ export default function App() {
     const project = activeProject();
     if (!project) return;
     try {
+      const file = activeFile();
       await addMark({
         project,
         nodeId,
+        ...(file !== null ? { file } : {}),
         ...(el.dataset['nodeName'] !== undefined ? { name: el.dataset['nodeName'] } : {}),
         ...(el.dataset['nodeType'] !== undefined ? { type: el.dataset['nodeType'] } : {}),
         path: chain.map((c) => c.name ?? c.type).join(' / '),
@@ -1208,11 +1210,25 @@ export default function App() {
               <For each={marks()}>
                 {(m) => (
                   <li>
-                    <button class="item" classList={{ active: selectedId() === m.nodeId }} onClick={() => focusNodeById(m.nodeId)}>
+                    <button
+                      class="item"
+                      classList={{ active: selectedId() === m.nodeId }}
+                      onClick={() => {
+                        // 标记记了文件：跨文件点击先切稿，避免在错误的画布上找 id
+                        if (m.file !== undefined && m.file !== activeFile()) {
+                          openFile(m.file);
+                          return;
+                        }
+                        focusNodeById(m.nodeId);
+                      }}
+                    >
                       <span class="item-name">
                         <b class="mark-no">#{m.shortId}</b> {m.name ?? m.nodeId}
                       </span>
-                      <span class="item-meta">{m.path}</span>
+                      <span class="item-meta">
+                        {m.file !== undefined && m.file !== activeFile() ? `${m.file} · ` : ''}
+                        {m.path}
+                      </span>
                     </button>
                   </li>
                 )}

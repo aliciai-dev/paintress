@@ -85,7 +85,7 @@ Two project-level files keep a design consistent. Both are created automatically
 1. **Viewer first.** Run `paintress web` before the first write — see above. It is idempotent, so there is no reason to skip it.
 2. **Nothing to edit? Create it.** `paintress_new` is the only way to make a file; there is no "empty document" state to work around, and no need to hand-write JSON.
 3. **Query before you edit.** Node ids come from the file; never invent them.
-4. **`#N` means a marker.** When the user writes `#1`, call `paintress_marks` and map `#1` to a real node id. Markers are per viewer session.
+4. **`#N` means a marker.** When the user writes `#1`, call `paintress_marks`: it returns `#N -> { project, file, nodeId }`, so you can act on exactly one node in one file (`paintress_update` with that `path` and `id`). Markers are per viewer session and vanish when the viewer exits.
 5. **Top-level nodes are boards.** Use `paintress_doc_info` to list them before guessing what "the second screen" means.
 6. **After a batch, validate.** `paintress_validate` catches structural mistakes before the user opens the file.
 7. **Presets before pixels, components before building, fonts before text.** See above: colors and radii go through `paintress_preset`, the component library is checked before anything new is drawn, and text nodes get a registered font (the default is a reported gap, not a result).

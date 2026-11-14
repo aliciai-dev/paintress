@@ -422,7 +422,7 @@ describe('会话标记（marks API）', () => {
 
   interface MarkBody {
     ok: boolean;
-    mark: { shortId: number; nodeId: string; name?: string; path: string };
+    mark: { shortId: number; nodeId: string; name?: string; path: string; file?: string };
   }
 
   const post = async (body: Record<string, unknown>): Promise<Response> =>
@@ -439,6 +439,23 @@ describe('会话标记（marks API）', () => {
     expect(body.ok).toBe(true);
     expect(body.mark.nodeId).toBe('title');
     expect(body.mark.shortId).toBeGreaterThan(0);
+  });
+
+  it('同一文件同一 nodeId 复用短号；不同文件的同 id 各自分配', async () => {
+    const a = (await (
+      await post({ project: PROJECT, file: 'a.ptr', nodeId: 'dup', name: 'Dup' })
+    ).json()) as MarkBody;
+    const again = (await (
+      await post({ project: PROJECT, file: 'a.ptr', nodeId: 'dup', name: 'Dup' })
+    ).json()) as MarkBody;
+    expect(again.mark.shortId).toBe(a.mark.shortId);
+    expect(a.mark.file).toBe('a.ptr');
+
+    const other = (await (
+      await post({ project: PROJECT, file: 'b.ptr', nodeId: 'dup', name: 'Dup' })
+    ).json()) as MarkBody;
+    expect(other.mark.shortId).not.toBe(a.mark.shortId);
+    expect(other.mark.file).toBe('b.ptr');
   });
 
   it('同一 nodeId 复用短号，不重复分配', async () => {
