@@ -4,6 +4,11 @@
   <p><a href="README.md">English</a></p>
 </div>
 
+<p align="center">
+  <a href="demo/demo-calculator.webp"><img src="demo/demo-calculator.webp" width="880" alt="paintress 查看器里打开的计算器设计稿"></a>
+</p>
+<p align="center"><sub>一句话 —— <em>「设计一个时尚的计算器界面」</em> —— agent 画完直接在查看器里打开的样子。</sub></p>
+
 **安装方式：把本仓库地址贴给您的 agent，让它装 paintress。** 需要精确流程的 agent 见[文末的安装手册](#给-ai-agent-的安装手册)。
 
 ## 这是什么
