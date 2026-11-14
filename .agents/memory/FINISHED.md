@@ -173,3 +173,12 @@
 - 实测（本机 WSL2 + WSLg）：`paintress web` → Windows 侧 Firefox 窗口带 paintress 标题；裸 `web` 幂等复用、`ping`/`stop` 正常。
 - 质量基线：双端 `tsc` 0 错误、**22 文件 297 用例全绿**、`pnpm build` 通过。
 - 证据：`.agents/implementations/2026-11-14_0428_wsl-host-browser-and-minimal-viewer-prompt.md`。
+
+### 全收工后窗口自己关 + 倒计时卡片重做（2026-11-14）
+
+- 根因：10s 倒计时只挂在「项目归零」路径上，daemon `shutdown` 直接进静态「服务已关闭」页；且没人验证过 `window.close()` 能不能关。
+- 实测结论：Chrome 允许脚本关闭 **history.length === 1** 的标签（与谁打开无关，`--headless=new` 同样成立）；`pushState` 到 2 就被拒。查看器路由只用 `replaceState`，故正常路径关得掉。
+- 改：项目归零 / SSE `shutdown` / 手动关服务器三个入口统一进 `startLeave()`（idle | closed，10s，不重置秒数）；归零后 `window.close()`，600ms 仍活着 → 明说「浏览器不允许自动关闭」；agent 重新接入撤销。
+- 视觉：细线进度条换成 72px 环形进度 + 居中秒数，顶部 2px 蓝→金发丝线，最后 3 秒转金；`prefers-reduced-motion` 全关；秒数只出现一次，读屏用 `sr-only` 播报。
+- 质量基线：双端 `tsc` 0 错误、**23 文件 300 用例全绿**、`pnpm build` 通过；新增 `test/viewer-leave.spec.ts`（3 用例，真实 Chromium，含「关不掉」分支）。
+- 证据：`.agents/implementations/2026-11-14_1443_autoclose-window.md`；决策见 `.agents/memory/ARCHITECTURE.md#D-009`。

@@ -52,6 +52,12 @@ export interface Messages {
   /** 无激活项目时的关窗倒计时 */
   noActiveProjects: string;
   closingIn: (seconds: number) => string;
+  /** 倒计时卡片正文：服务已在关（daemon 自己退出 / 手动关服务） */
+  closingAuto: string;
+  /** 倒计时卡片正文：项目被 agent 全收走，还能被重新接入撤销 */
+  closingWaitAgent: string;
+  /** 浏览器拒绝脚本关窗（标签有过浏览历史）时的说明 */
+  closeBlockedHint: string;
   /** 刚打开页面、还没有任何项目时的等待文案 */
   waitingForAgent: string;
   /** 画布左侧笔记抽屉 / 右上浮动工具条与面板 */
@@ -115,6 +121,9 @@ const MESSAGES: Record<Lang, Messages> = {
     agentOnline: 'agent 已接入',
     noActiveProjects: '无激活项目',
     closingIn: (seconds) => `窗口将在 ${seconds} 秒后关闭`,
+    closingAuto: '窗口会自动关闭，不用手动操作。',
+    closingWaitAgent: '窗口会自动关闭，agent 接入即取消。',
+    closeBlockedHint: '浏览器不允许自动关闭，请手动关掉这个标签。',
     waitingForAgent: '等待 agent 接入 —— 在项目里让 AI 操作设计稿，这里会自动出现。',
     notes: '笔记',
     notesTitle: '设计笔记',
@@ -174,6 +183,9 @@ const MESSAGES: Record<Lang, Messages> = {
     agentOnline: 'Agent attached',
     noActiveProjects: 'No active projects',
     closingIn: (seconds) => `This window closes in ${seconds}s`,
+    closingAuto: 'This window closes itself — no need to do anything.',
+    closingWaitAgent: 'This window closes itself; an agent reattaching cancels it.',
+    closeBlockedHint: 'The browser blocked the automatic close — please close this tab manually.',
     waitingForAgent: 'Waiting for an agent — ask your AI to touch a design and it shows up here automatically.',
     notes: 'Notes',
     notesTitle: 'Design notes',

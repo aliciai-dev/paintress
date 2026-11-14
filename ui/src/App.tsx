@@ -63,6 +63,17 @@ interface ProjectRow extends ProjectInfo {
 /** 需要二次确认的破坏性动作（两者都不能手滑就执行） */
 type PendingAction = { kind: 'unwatch'; name: string } | { kind: 'shutdown' };
 
+/** 关窗倒计时秒数。daemon 侧 emptyBrowserMs 默认 30s 兜底，10s 留足了余量 */
+const LEAVE_SECONDS = 10;
+/** 倒计时环半径 30 的周长，SVG 进度靠它换算 stroke-dashoffset */
+const RING_LEN = 2 * Math.PI * 30;
+/**
+ * 倒计时为什么关窗：
+ * - `idle`：项目全被 agent 收走，daemon 还活着（结束时要顺手把它关掉）；
+ * - `closed`：daemon 自己已经在关（空闲退出 / 侧栏「关闭服务器」），别再去打它。
+ */
+type LeaveReason = 'idle' | 'closed';
+
 /** 从路径里按最长前缀解析项目（项目 key 带 `/`，如 `c-thun/raybend`） */
 function projectFromPath(pathname: string, list: readonly ProjectInfo[]): string | null {
   const segs = pathname.split('/').filter((s) => s !== '');
@@ -116,8 +127,11 @@ export default function App() {
   const [panel, setPanel] = createSignal<'presets' | 'components' | null>(null);
   const [presets, setPresets] = createSignal<PresetItem[]>([]);
   const [components, setComponents] = createSignal<ComponentItem[]>([]);
-  /** 无激活项目时的关窗倒计时（秒）；null = 不显示遮罩 */
+  /** 关窗倒计时（秒）；null = 不显示遮罩 */
   const [countdown, setCountdown] = createSignal<number | null>(null);
+  const [leaveReason, setLeaveReason] = createSignal<LeaveReason>('idle');
+  /** 倒计时结束仍没关掉：浏览器只允许人自己关「有过浏览历史」的标签，得明说 */
+  const [closeBlocked, setCloseBlocked] = createSignal(false);
   /** 本次页面会话是否曾经有过项目：有过的项目全消失才是「agent 收工」，才值得弹倒计时 */
   let sawProjects = false;
   const [showUpdate, setShowUpdate] = createSignal(false);
@@ -397,8 +411,9 @@ export default function App() {
         await unwatchProject(action.name);
         await refreshRegistry();
       } else {
+        // 人点了「关闭服务器」：进程立刻停，倒计时只负责把窗口收掉
         await shutdownDaemon();
-        setClosed(true);
+        startLeave('closed');
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -437,11 +452,8 @@ export default function App() {
         void refreshRegistry();
       }
     });
-    // daemon 要关了（可能是倒计时结束、也可能是 agent 侧收尾）：把画面停在一个说得通的状态
-    registrySource.addEventListener('shutdown', () => {
-      setCountdown(null);
-      setClosed(true);
-    });
+    // daemon 要关了（空闲退出 / agent 侧收尾）：不必等它断线，直接进关窗倒计时
+    registrySource.addEventListener('shutdown', () => startLeave('closed'));
     onCleanup(() => registrySource.close());
 
     // 首次 /api/projects 只启动后台 npm 探测并返回旧值；4s 后再取才能看到结果。
@@ -529,9 +541,14 @@ export default function App() {
     })();
   });
 
-  // ---------- 无激活项目 → 10s 倒计时关窗（人不需要自己去关页面/杀进程）----------
+  // ---------- 全收工 → 10s 倒计时关窗（人不需要自己去关页面/杀进程）----------
   let tickTimer: ReturnType<typeof setInterval> | undefined;
-  onCleanup(() => clearInterval(tickTimer));
+  /** 关窗后的「关不掉」探测（页面已被关掉的话这个定时器根本不会跑） */
+  let blockedTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    clearInterval(tickTimer);
+    clearTimeout(blockedTimer);
+  });
 
   function stopCountdown(): void {
     clearInterval(tickTimer);
@@ -539,42 +556,75 @@ export default function App() {
     setCountdown(null);
   }
 
-  async function shutdownAndLeave(): Promise<void> {
+  /** 撤销整个「要走了」状态（倒计时 + 已关闭 + 关不掉提示），页面继续可用 */
+  function stopLeave(): void {
     stopCountdown();
-    try {
-      await shutdownDaemon();
-    } catch {
-      /* 已经不可达也算目的达成 */
+    clearTimeout(blockedTimer);
+    setClosed(false);
+    setCloseBlocked(false);
+  }
+
+  /**
+   * 收工了：10s 后关窗。三个入口共用（项目归零 / daemon shutdown / 手动关服务器）。
+   * 已在倒计时时只允许 `idle → closed` 升级，**不重置秒数**——
+   * shutdown 事件经常紧跟项目归零，重置会让人看着一个跳回 10 的倒计时。
+   * 已经走完（closed）就不再重开：唯一回去的路是 agent 重新接入（`stopLeave`）。
+   */
+  function startLeave(reason: LeaveReason): void {
+    if (closed()) return;
+    if (countdown() !== null) {
+      if (reason === 'closed') setLeaveReason('closed');
+      return;
+    }
+    setLeaveReason(reason);
+    setCloseBlocked(false);
+    setCountdown(LEAVE_SECONDS);
+    clearInterval(tickTimer);
+    tickTimer = setInterval(() => {
+      const left = (countdown() ?? 0) - 1;
+      if (left <= 0) {
+        void finishLeave();
+        return;
+      }
+      setCountdown(left);
+    }, 1000);
+  }
+
+  /**
+   * 倒计时归零：尽力把窗口关掉。
+   * Chromium 允许脚本关闭 **只有一条历史** 的标签（daemon 用宿主浏览器打开的就是这种），
+   * 所以正常路径下人什么都不用点；只有标签被导航过（history ≥ 2）时才关不掉——
+   * 那就把卡片停在说明态，并在 600ms 后把文案换成「浏览器拒绝了自动关闭」。
+   */
+  async function finishLeave(): Promise<void> {
+    const reason = leaveReason();
+    stopCountdown();
+    if (reason === 'idle') {
+      try {
+        await shutdownDaemon();
+      } catch {
+        /* 已经不可达也算目的达成 */
+      }
     }
     setClosed(true);
-    // 只有脚本打开的标签才能被关；做不到就留在「服务已关闭」页，不报错（close() 失败不会抛）
-    window.close();
+    window.close(); // 关掉了就不会往下走（定时器随文档一起消失）
+    blockedTimer = setTimeout(() => {
+      if (closed()) setCloseBlocked(true);
+    }, 600);
   }
 
   createEffect(
     on(
       () => projects().length,
       (n) => {
-        if (closed()) return;
-        // 有项目（或被 attach 重新拉进来）→ 撤销倒计时
+        // 有项目（或被 attach 重新拉进来）→ 撤销倒计时，页面继续用
         if (n > 0) {
-          if (countdown() !== null) stopCountdown();
+          if (countdown() !== null || closed()) stopLeave();
           return;
         }
         // 从没进过项目就不弹（刚手动起 daemon、等 agent 接入的那几秒不该被吓一跳）
         if (!sawProjects) return;
-        if (countdown() !== null) return;
-        setCountdown(10);
-        clearInterval(tickTimer);
-        tickTimer = setInterval(() => {
-          const left = (countdown() ?? 0) - 1;
-          if (left <= 0) {
-            stopCountdown();
-            void shutdownAndLeave();
-            return;
-          }
-          setCountdown(left);
-        }, 1000);
+        startLeave('idle');
       },
     ),
   );
@@ -1206,24 +1256,46 @@ export default function App() {
         onCancel={() => setPending(null)}
       />
 
+      {/* 关窗没成功（标签有浏览历史）：停在说明态，别让人对着 0 秒发呆 */}
       <Show when={closed()}>
-        <div class="modal-backdrop">
-          <div class="modal" role="status">
+        <div class="modal-backdrop countdown-backdrop">
+          <div class="modal countdown closed" role="status">
             <h3>{m().serverClosed}</h3>
-            <p class="modal-body">{m().serverClosedHint}</p>
+            <p class="modal-body">{closeBlocked() ? m().closeBlockedHint : m().serverClosedHint}</p>
           </div>
         </div>
       </Show>
 
-      {/* 无激活项目：10s 倒计时遮罩（agent 重启接入会自动撤销，人不用管） */}
+      {/* 收工倒计时：项目全收走 / 服务关闭 → 10s 后自己关窗（agent 重新接入会自动撤销） */}
       <Show when={countdown() !== null && !closed()}>
         <div class="modal-backdrop countdown-backdrop">
-          <div class="modal countdown" role="alertdialog" aria-live="polite">
-            <h3>{m().noActiveProjects}</h3>
-            <p class="modal-body">{m().closingIn(countdown() ?? 0)}</p>
-            <div class="countdown-track" aria-hidden="true">
-              <span class="countdown-fill" style={{ '--left': `${((countdown() ?? 0) / 10) * 100}%` }} />
+          <div
+            class="modal countdown"
+            classList={{ urgent: (countdown() ?? 0) <= 3 }}
+            role="status"
+            aria-labelledby="countdown-title"
+          >
+            <div class="countdown-ring" aria-hidden="true">
+              <svg viewBox="0 0 68 68">
+                <circle class="countdown-ring-track" cx="34" cy="34" r="30" />
+                <circle
+                  class="countdown-ring-fill"
+                  cx="34"
+                  cy="34"
+                  r="30"
+                  style={{
+                    'stroke-dashoffset': (RING_LEN * (1 - (countdown() ?? 0) / LEAVE_SECONDS)).toFixed(1),
+                  }}
+                />
+              </svg>
+              <span class="countdown-num">{countdown() ?? 0}</span>
             </div>
+            <h3 id="countdown-title">{leaveReason() === 'closed' ? m().serverClosed : m().noActiveProjects}</h3>
+            <p class="modal-body">{leaveReason() === 'closed' ? m().closingAuto : m().closingWaitAgent}</p>
+            {/* 秒数只在环里出现一次；读屏靠这句播报 */}
+            <p class="sr-only" aria-live="polite">
+              {m().closingIn(countdown() ?? 0)}
+            </p>
           </div>
         </div>
       </Show>
