@@ -77,7 +77,7 @@ paintress font list|add|remove|default ...                project font registry
 paintress audit <file>                               read-only design-system audit
 paintress establish <file> [--apply]                propose tokens / preset groups (dry-run by default)
 paintress adjust <file> --key k --value v [--apply] preview or apply a design-system adjustment
-paintress component list|insert ...                     project component library
+paintress component list|insert|add ...                  project component library
 paintress render <file> <out.html>                      write the canvas as HTML
 paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  render to PNG (default 0.8)
 

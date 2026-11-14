@@ -77,7 +77,7 @@ paintress font list|add|remove|default ...               项目字体注册表
 paintress audit <file>                            画谱审计（只读）
 paintress establish <file> [--apply]             提取 token / preset 组（默认只给建议）
 paintress adjust <file> --key k --value v [--apply]  调整画谱（默认只看影响面）
-paintress component list|insert ...                    项目组件库
+paintress component list|insert|add ...                 项目组件库
 paintress render <file> <out.html>                     渲染为 HTML
 paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  渲染为 PNG（默认 0.8）
 
