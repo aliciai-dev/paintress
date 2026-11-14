@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -130,11 +130,13 @@ describe('谱值扩展：间距 / 字体（B1）', () => {
 
 describe('谱式：preset 组 + 节点引用（B2）', () => {
   it('写组不丢 token，写 token 不丢组', () => {
-    setPresetGroup(root, { name: 'body-text', target: 'text', props: { fill: '$color-brand', fontSize: '$space-md' } });
+    // 字号用 fontSize token（D0 之后 fontSize 引用 spacing token 会被校验出类型错配）
+    setPreset(root, { key: 'fontSize-16', type: 'fontSize', value: '16' });
+    setPresetGroup(root, { name: 'body-text', target: 'text', props: { fill: '$color-brand', fontSize: '$fontSize-16' } });
     setPreset(root, { key: 'color-muted', type: 'color', value: '#7a7166' });
 
     const groups = listPresetGroups(root).groups;
-    expect(groups['body-text']).toEqual({ target: 'text', props: { fill: '$color-brand', fontSize: '$space-md' } });
+    expect(groups['body-text']).toEqual({ target: 'text', props: { fill: '$color-brand', fontSize: '$fontSize-16' } });
     expect(listPresets(root).items.some((p) => p.key === 'color-muted')).toBe(true);
 
     removePreset(root, 'color-muted');
@@ -245,5 +247,82 @@ describe('paintress_preset 工具', () => {
     } finally {
       rmSync(lonely, { recursive: true, force: true });
     }
+  });
+});
+
+describe('字号 token（D0）', () => {
+  it('fontSize 落盘为 number；非法值被拒', () => {
+    setPreset(root, { key: 'fontSize-lg', type: 'fontSize', value: '24' });
+    const doc = loadDoc(join(root, PRESET_FILE)).doc;
+    expect(doc.variables?.['fontSize-lg']).toMatchObject({ type: 'number', value: 24 });
+    expect(listPresets(root).items.find((p) => p.key === 'fontSize-lg')?.type).toBe('fontSize');
+    expect(() => setPreset(root, { key: 'bad-size', type: 'fontSize', value: '-1' })).toThrow(/字号/);
+  });
+
+  it('老文件里的 font + 数字值：读取归一为字号，渲染 16px、文件一个字不改', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'paintress-fontsize-'));
+    try {
+      // 2026-11-15 之前的 establish 会产出这种形状（font 类型 + 数字字串）
+      writeFileSync(
+        join(legacy, PRESET_FILE),
+        JSON.stringify({
+          version: '2.22',
+          fileToken: '00000000-0000-4000-8000-0000000000dd',
+          variables: { 'font-16': { type: 'string', value: '16' } },
+          children: [],
+          'x-paintress': { spec: '1', presets: { version: 1, items: { 'font-16': { type: 'font', name: 'body' } } } },
+        }),
+      );
+      const designPath = join(legacy, 'a.ptr');
+      writeFileSync(
+        designPath,
+        JSON.stringify({
+          version: '2.22',
+          fileToken: '00000000-0000-4000-8000-0000000000ee',
+          variables: {},
+          children: [
+            { type: 'frame', id: 'b', width: 200, height: 100, children: [{ type: 'text', id: 't', content: 'A', fontSize: '$font-16' }] },
+          ],
+        }),
+      );
+
+      expect(listPresets(legacy).items).toEqual([{ key: 'font-16', type: 'fontSize', name: 'body', value: '16' }]);
+      const before = readFileSync(join(legacy, PRESET_FILE), 'utf8');
+      const merged = applyProjectPresets(loadDoc(designPath).doc, designPath).doc;
+      expect(merged.variables?.['font-16']).toMatchObject({ type: 'number', value: 16 });
+
+      const out = renderDocument(merged);
+      expect(out.html).toContain('font-size:16px');
+      expect(out.warnings).toEqual([]);
+      // 读取不落盘：老文件保持原样，第一次编辑才升级类型
+      expect(readFileSync(join(legacy, PRESET_FILE), 'utf8')).toBe(before);
+    } finally {
+      rmSync(legacy, { recursive: true, force: true });
+    }
+  });
+
+  it('引用类型校验：颜色属性引用倒角、字号引用字体族 → 各一条 warning；同类引用不报', () => {
+    const doc = {
+      version: '2.22',
+      variables: {},
+      children: [{ type: 'text', id: 't', content: 'A', fill: '$radius-md', fontSize: '$font-body' }],
+    } as unknown as PenDocument;
+    const kinds = { 'radius-md': 'radius', 'font-body': 'font', 'fontSize-lg': 'fontSize' } as const;
+    const messages = validateDoc(doc, { presetKinds: { ...kinds } }).warnings.map((w) => w.message);
+    expect(messages.some((m) => m.includes('fill 需要颜色 token') && m.includes('$radius-md'))).toBe(true);
+    expect(messages.some((m) => m.includes('fontSize 需要字号 token') && m.includes('$font-body'))).toBe(true);
+
+    const ok = {
+      version: '2.22',
+      variables: {},
+      children: [{ type: 'text', id: 't', content: 'A', fontSize: '$fontSize-lg', fill: '$fontSize-lg' }],
+    } as unknown as PenDocument;
+    expect(validateDoc(ok, { presetKinds: { ...kinds } }).warnings.some((w) => w.message.includes('fill 需要颜色 token'))).toBe(true);
+    const good = {
+      version: '2.22',
+      variables: {},
+      children: [{ type: 'text', id: 't', content: 'A', fontSize: '$fontSize-lg' }],
+    } as unknown as PenDocument;
+    expect(validateDoc(good, { presetKinds: { ...kinds } }).warnings.some((w) => w.message.includes('需要字号'))).toBe(false);
   });
 });

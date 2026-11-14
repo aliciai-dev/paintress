@@ -1,5 +1,5 @@
 import { DocumentSchema, KNOWN_NODE_TYPES, VARIABLE_NAME } from '../schema/index.js';
-import { presetGroupsOf, type PresetGroup } from './presets.js';
+import { PRESET_TYPE_LABEL, PROP_TOKEN_KIND, presetGroupsOf, type PresetGroup, type PresetType } from './presets.js';
 import { collectIds } from './id.js';
 
 /** 校验结果：errors 阻断写入，warnings 不阻断 */
@@ -22,6 +22,20 @@ export interface ValidateOptions {
   presetVars?: Iterable<string>;
   /** 项目预设组（谱式）：节点 `preset` 引用与组内裸值都要检查 */
   presetGroups?: Record<string, PresetGroup>;
+  /** 项目预设里每个 token 的种类：属性引用错类（`fill: $radius-8`）时给警告 */
+  presetKinds?: Record<string, PresetType>;
+}
+
+/** 一个属性值里出现的所有 `$token` 引用（结构化填充、数组、逐边对象都要覆盖） */
+function refsIn(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    if (VARIABLE_NAME.test(value)) out.push(value.slice(1));
+  } else if (Array.isArray(value)) {
+    for (const entry of value) refsIn(entry, out);
+  } else if (value !== null && typeof value === 'object') {
+    for (const entry of Object.values(value)) refsIn(entry, out);
+  }
+  return out;
 }
 
 /** 结构校验（schema）+ 语义校验（重复 id、悬空 ref、未知类型、未解析变量） */
@@ -43,6 +57,7 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
   const doc = parsed.data;
   // 与渲染同一优先级：项目组打底、文档内组覆盖；否则同文档组会被误报成悬空引用
   const presetGroups = { ...(opts.presetGroups ?? {}), ...presetGroupsOf(doc) };
+  const presetKinds = opts.presetKinds ?? {};
 
   // 重复 id
   const allIds = collectIds(doc.children);
@@ -85,6 +100,23 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
       }
       const kids = rec['children'];
       if (Array.isArray(kids)) walk(kids, `${here}/children`);
+
+      // 引用类型错配：`fill: $radius-8`、`fontSize: $font-sans` 这类引用
+      // 渲染时不会报错，只会输出一个错值——必须在写入前点出来。
+      for (const [prop, value] of Object.entries(rec)) {
+        if (prop === 'children') continue;
+        const expected = PROP_TOKEN_KIND[prop];
+        if (expected === undefined) continue;
+        for (const ref of refsIn(value)) {
+          const actual = presetKinds[ref];
+          if (actual === undefined || actual === expected) continue;
+          warnings.push({
+            level: 'warning',
+            path: here,
+            message: `${prop} 需要${PRESET_TYPE_LABEL[expected]} token，$${ref} 是${PRESET_TYPE_LABEL[actual]}（类型 ${actual}）`,
+          });
+        }
+      }
     }
   };
   walk(doc.children, 'children');
@@ -98,6 +130,16 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
           path: `<preset:${name}>`,
           message: `preset 组里的 ${prop} 是字面量 "${value}"，应当写成 $token 引用`,
         });
+      } else {
+        const expected = PROP_TOKEN_KIND[prop];
+        const actual = presetKinds[value.slice(1)];
+        if (expected !== undefined && actual !== undefined && actual !== expected) {
+          warnings.push({
+            level: 'warning',
+            path: `<preset:${name}>`,
+            message: `${prop} 需要${PRESET_TYPE_LABEL[expected]} token，${value} 是${PRESET_TYPE_LABEL[actual]}（类型 ${actual}）`,
+          });
+        }
       }
     }
   }

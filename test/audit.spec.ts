@@ -38,6 +38,8 @@ beforeAll(() => {
             children: [
               { type: 'text', id: 'a', preset: 'body-text', content: 'A' },
               { type: 'text', id: 'b', preset: 'nope', content: 'B' },
+              // 字号 / 字体族裸值：D0 之后应分别建议成 $fontSize-16 / $font-ui
+              { type: 'text', id: 'sized', content: '16', fontSize: 16, fontFamily: 'Inter' },
               // 裸色 + 裸圆角，且显式允许字面量（逃生舱）
               {
                 type: 'rectangle',
@@ -69,6 +71,8 @@ describe('auditDoc', () => {
       { key: 'color-brand', type: 'color', value: '#3B82F6' },
       { key: 'radius-md', type: 'radius', value: '6' },
       { key: 'space-md', type: 'spacing', value: '12' },
+      { key: 'fontSize-16', type: 'fontSize', value: '16' },
+      { key: 'font-ui', type: 'font', value: 'Inter' },
       { key: 'orphan', type: 'color', value: '#000000' },
     ];
     return auditDoc(loaded.doc, auditInputFrom(loaded.doc, tokens, preset));
@@ -101,6 +105,14 @@ describe('auditDoc', () => {
 
   it('summary 是给人看的一句话', () => {
     expect(run().summary).toMatch(/越界裸值 \d+/);
+  });
+
+  it('字号建议 $fontSize-16、字体族建议 $font-ui（fontSize 不再被归到 font）', () => {
+    const r = run();
+    const size = r.findings.find((f) => f.kind === 'literal' && f.where === 'sized' && f.message.includes('fontSize'));
+    expect(size?.suggestion).toBe('$fontSize-16');
+    const family = r.findings.find((f) => f.kind === 'literal' && f.where === 'sized' && f.message.includes('fontFamily'));
+    expect(family?.suggestion).toBe('$font-ui');
   });
 });
 

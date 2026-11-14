@@ -40,7 +40,7 @@ import { VERSION } from './shared/version.js';
  *   paintress establish <file> [--apply] [--min-uses n]  提取候选（默认只给建议）
  *   paintress adjust <file> --key k --value v [--apply]  改 token；或 --group g --prop p
  *   paintress preset list [dir]                       项目预设列表
- *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius|spacing|font）
+ *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius|spacing|fontSize|font）
  *   paintress preset groups [dir]                     列出 preset 组（谱式）
  *   paintress preset set-group <dir> <组名> <target> '<props-json>'
  *   paintress preset remove-group <dir> <组名>
@@ -390,7 +390,7 @@ export async function main(argv: string[]): Promise<number> {
         out = await call('paintress_preset', { action: 'remove-group', path: a1, group: a2 });
       } else if (action === 'set') {
         if (!a1 || !a2 || !positionals[3] || !positionals[4]) {
-          throw new Error('用法：paintress preset set <dir> <key> <color|radius|spacing|font> <value> [--name 名称]');
+          throw new Error('用法：paintress preset set <dir> <key> <color|radius|spacing|fontSize|font> <value> [--name 名称]');
         }
         out = await call('paintress_preset', {
           action: 'set',

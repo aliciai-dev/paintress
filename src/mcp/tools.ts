@@ -10,6 +10,7 @@ import { applyAdjust, applyEstablish, planAdjust, planEstablish, readPresetDoc }
 import {
   applyProjectPresets,
   componentsPathFor,
+  projectPresetKinds,
   projectPresetNames,
   findNodeIn,
   isPresetType,
@@ -23,7 +24,6 @@ import {
   readComponentsFile,
   removePreset,
   setPreset,
-  type PresetType,
 } from '../doc/project.js';
 import { query as q, get as g, update as u, insert as i, remove as rm, move as mv, batch as bt, type BatchOp } from '../ops/index.js';
 import { expandRefs, renderDocument } from '../render/index.js';
@@ -112,6 +112,7 @@ async function write(
     knownVars: presetNames,
     presetVars: presetNames,
     presetGroups: listPresetGroups(path).groups,
+    presetKinds: projectPresetKinds(path),
   });
   if (!v.ok) {
     throw new Error(`变更后结构校验失败，未落盘：\n${v.errors.map((e) => `  ${e.path}: ${e.message}`).join('\n')}`);
@@ -393,18 +394,19 @@ export const TOOLS: Record<string, ToolDef> = {
         knownVars: presetNames,
         presetVars: presetNames,
         presetGroups: listPresetGroups(path).groups,
+        presetKinds: projectPresetKinds(path),
       });
     },
   },
 
   paintress_preset: {
     description:
-      '项目预设（画谱的 token 与谱式）：颜色 / 倒角 / 间距 / 字体这类会反复微调的值在项目里存一份（__preset.ptr），设计稿里写 $key 引用。action=list 看全部（含 preset 组），set 新建/改值，remove 删除；set-group 定义一组按节点类型生效的属性（值必须是 $token，如 {fill:"$color-brand"}），节点写 preset:"<组名>" 即生效',
+      '项目预设（画谱的 token 与谱式）：颜色 / 倒角 / 间距 / 字号 / 字体这类会反复微调的值在项目里存一份（__preset.ptr），设计稿里写 $key 引用。action=list 看全部（含 preset 组），set 新建/改值，remove 删除；set-group 定义一组按节点类型生效的属性（值必须是 $token，如 {fill:"$color-brand"}），节点写 preset:"<组名>" 即生效',
     inputSchema: {
       action: z.enum(['list', 'set', 'remove', 'set-group', 'remove-group']),
       path: z.string().optional().describe('设计稿或项目目录，默认当前工作目录'),
       key: z.string().optional().describe('token 名，设计稿里写 $key；set / remove 必填'),
-      type: z.enum(['color', 'radius', 'spacing', 'font']).optional().describe('token 类型；set 必填'),
+      type: z.enum(['color', 'radius', 'spacing', 'fontSize', 'font']).optional().describe('token 类型；set 必填'),
       name: z.string().optional().describe('人看的名称，默认同 key'),
       value: z.string().optional().describe("值：颜色 #RRGGBB（或 #RGB / #RRGGBBAA），倒角/间距写非负数字，字体写字体族；set 必填"),
       group: z.string().optional().describe('preset 组名；set-group / remove-group 必填'),
@@ -440,7 +442,7 @@ export const TOOLS: Record<string, ToolDef> = {
         return { ok: true, path: presetPathFor(from), items, groups: listPresetGroups(from).groups };
       }
       const type = optStr(a, 'type');
-      if (!isPresetType(type)) throw new Error('type 必须是 color / radius / spacing / font');
+      if (!isPresetType(type)) throw new Error('type 必须是 color / radius / spacing / fontSize / font');
       const name = optStr(a, 'name');
       const items = setPreset(from, {
         key,

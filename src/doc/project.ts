@@ -3,9 +3,9 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc } from './io.js';
 import { PEN_DOC_VERSION, type PenDocument } from '../schema/index.js';
-import { presetGroupsOf, type PresetGroup } from './presets.js';
+import { PRESET_TYPES, presetGroupsOf, isNumericPresetValue, isPresetType, type PresetGroup, type PresetType } from './presets.js';
 
-export { presetGroupsOf, type PresetGroup };
+export { PRESET_TYPES, presetGroupsOf, isPresetType, type PresetGroup, type PresetType };
 
 /**
  * 项目级预设与组件库（规格见 specs/project-presets.md、specs/components.md）。
@@ -17,12 +17,6 @@ export { presetGroupsOf, type PresetGroup };
 
 export const PRESET_FILE = '__preset.ptr';
 export const COMPONENTS_FILE = '__components.ptr';
-
-/**
- * 预设（token）类型：`color` / `radius` / `spacing` / `font`。
- * 值对外一律是字串，落盘按变量真实类型（color→color，radius/spacing→number，font→string）。
- */
-export type PresetType = 'color' | 'radius' | 'spacing' | 'font';
 
 export interface PresetItem {
   /** 变量名，设计稿里用 `$key` 引用 */
@@ -39,10 +33,6 @@ export interface PresetFile {
   doc: PenDocument;
   mtimeMs: number;
   items: PresetItem[];
-}
-
-export function isPresetType(v: unknown): v is PresetType {
-  return v === 'color' || v === 'radius' || v === 'spacing' || v === 'font';
 }
 
 /** 拼出设计稿旁边那份笔记的绝对路径（只认 .ptr / .pen，其余扩展名返回 null） */
@@ -100,9 +90,13 @@ function presetKindOf(key: string, doc: PenDocument): PresetType | null {
   const meta = (doc as Record<string, unknown>)['x-paintress'];
   const items = isRecord(meta) && isRecord(meta['presets']) ? meta['presets']['items'] : undefined;
   const declared = isRecord(items) && isRecord(items[key]) ? items[key]['type'] : undefined;
+  const def = doc.variables?.[key];
+  const raw = isRecord(def) ? def['value'] : undefined;
+  // 读取归一：2026-11-15 之前 `font` 兼做字体族与字号，数字值一律按字号解释。
+  // 文件本身不改；面板与审计报 `fontSize`，第一次编辑时才落新类型。
+  if ((declared === 'font' || declared === undefined) && isNumericPresetValue(raw)) return 'fontSize';
   if (isPresetType(declared)) return declared;
   // 无 metadata 的手写文件：按变量类型回退
-  const def = doc.variables?.[key];
   const t = isRecord(def) ? def['type'] : undefined;
   if (t === 'color') return 'color';
   if (t === 'number') return 'radius';
@@ -144,11 +138,33 @@ export function listPresets(from: string): { path: string | null; items: PresetI
 }
 
 /**
+ * 读取归一：老文件里 `font` + 数字值的 token 在**合并副本**里按 number 呈现，
+ * 让 `resolveNum` 认得它。文件本身一个字都不改，面板与审计报 `fontSize`，
+ * 第一次编辑时才落新类型。
+ */
+function normalizedPresetVariables(presetDoc: PenDocument | null): PenDocument['variables'] {
+  const vars = presetDoc?.variables;
+  if (vars === undefined) return undefined;
+  const meta = (presetDoc as Record<string, unknown>)['x-paintress'];
+  const items = isRecord(meta) && isRecord(meta['presets']) ? meta['presets']['items'] : undefined;
+  const out: NonNullable<PenDocument['variables']> = { ...vars };
+  for (const [key, def] of Object.entries(vars)) {
+    if (!isRecord(def)) continue;
+    const declared = isRecord(items) && isRecord(items[key]) ? items[key]['type'] : undefined;
+    const raw = def['value'];
+    if ((declared === 'font' || declared === undefined) && isNumericPresetValue(raw)) {
+      out[key] = { ...def, type: 'number', value: Number(raw) };
+    }
+  }
+  return out;
+}
+
+/**
  * 渲染/校验用的副本：预设打底，文档本地同名变量优先。
  * **绝不能拿去保存** —— 否则一次写入就把预设值烤进了设计稿。
  */
 export function withProjectPresets(doc: PenDocument, presetDoc: PenDocument | null): PenDocument {
-  const vars = presetDoc?.variables;
+  const vars = normalizedPresetVariables(presetDoc);
   const presetGroups = presetGroupsOf(presetDoc);
   const ownGroups = presetGroupsOf(doc);
   const groups = { ...presetGroups, ...ownGroups };
@@ -191,6 +207,15 @@ export function projectPresetNames(filePath: string): Set<string> {
   return presetVarNames(readPresetFile(p)?.doc ?? null);
 }
 
+/** 项目预设里每个 token 的种类（引用的类型校验用）；没有文件就是空表 */
+export function projectPresetKinds(filePath: string): Record<string, PresetType> {
+  const p = presetPathFor(filePath);
+  if (p === null) return {};
+  const out: Record<string, PresetType> = {};
+  for (const item of readPresetFile(p)?.items ?? []) out[item.key] = item.type;
+  return out;
+}
+
 /** 预设文件对应的变量名集合（校验时用来区分「未定义」与「来自项目预设」） */
 export function presetVarNames(presetDoc: PenDocument | null): Set<string> {
   return new Set(Object.keys(presetDoc?.variables ?? {}));
@@ -211,13 +236,13 @@ export function normalizePresetValue(type: PresetType, value: string): string | 
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
-    const what = type === 'spacing' ? '间距' : '倒角';
+    const what = type === 'spacing' ? '间距' : type === 'fontSize' ? '字号' : '倒角';
     throw new Error(`${what}预设只接受非负数，收到：${value}`);
   }
   return n;
 }
 
-/** 变量表里的 type：color→color，radius/spacing→number，font→string */
+/** 变量表里的 type：color→color，radius/spacing/fontSize→number，font→string */
 function varTypeOf(type: PresetType): 'color' | 'number' | 'string' {
   if (type === 'color') return 'color';
   if (type === 'font') return 'string';

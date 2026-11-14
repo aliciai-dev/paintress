@@ -25,10 +25,10 @@ const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 /** 参与提取的属性：颜色（fill/stroke）与数值（圆角/间距/字号） */
 const COLOR_PROPS = ['fill', 'stroke'] as const;
-const NUM_PROPS: { prop: string; kind: 'radius' | 'spacing' | 'font' }[] = [
+const NUM_PROPS: { prop: string; kind: 'radius' | 'spacing' | 'fontSize' }[] = [
   { prop: 'cornerRadius', kind: 'radius' },
   { prop: 'gap', kind: 'spacing' },
-  { prop: 'fontSize', kind: 'font' },
+  { prop: 'fontSize', kind: 'fontSize' },
 ];
 
 export interface LiteralUse {
@@ -38,7 +38,7 @@ export interface LiteralUse {
 
 export interface CandidateToken {
   key: string;
-  type: 'color' | 'radius' | 'spacing' | 'font';
+  type: 'color' | 'radius' | 'spacing' | 'fontSize';
   value: string;
   uses: LiteralUse[];
 }
@@ -63,6 +63,7 @@ export function suggestTokenKey(type: string, value: string): string {
   if (type === 'color') return `color-${safe.toLowerCase()}`;
   if (type === 'radius') return `radius-${safe}`;
   if (type === 'spacing') return `spacing-${safe}`;
+  if (type === 'fontSize') return `fontSize-${safe}`;
   return `font-${safe}`;
 }
 
@@ -73,7 +74,7 @@ export function suggestTokenKey(type: string, value: string): string {
 export function planEstablish(doc: PenDocument, opts: { minUses?: number } = {}): EstablishPlan {
   const minUses = Math.max(2, opts.minUses ?? 2);
   const colorUses = new Map<string, LiteralUse[]>();
-  const numUses = new Map<string, { kind: 'radius' | 'spacing' | 'font'; value: string; uses: LiteralUse[] }>();
+  const numUses = new Map<string, { kind: 'radius' | 'spacing' | 'fontSize'; value: string; uses: LiteralUse[] }>();
   const signatures = new Map<string, { target: string; props: Record<string, string>; ids: string[] }>();
 
   const walk = (nodes: unknown[], inheritedAllowLiteral = false): void => {

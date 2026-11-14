@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyAdjust, applyEstablish, planAdjust, planEstablish, readPresetDoc } from '../src/doc/album.js';
-import { ensureProjectScaffold, listPresetGroups, listPresets, PRESET_FILE } from '../src/doc/project.js';
+import { ensureProjectScaffold, applyProjectPresets, listPresetGroups, listPresets, PRESET_FILE } from '../src/doc/project.js';
+import { renderDocument } from '../src/render/index.js';
 import { loadDoc } from '../src/doc/io.js';
 import { TOOLS } from '../src/mcp/tools.js';
 import type { PenDocument } from '../src/schema/index.js';
@@ -149,5 +150,50 @@ describe('工具面', () => {
       findings: { kind: string; message: string }[];
     };
     expect(audit.findings.some((f) => f.kind === 'unused-preset')).toBe(false);
+  });
+});
+
+describe('字号 token（D0）', () => {
+  it('重复 fontSize 提成 fontSize token；apply 后渲染仍是 16px、0 警告', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'paintress-fontsize-album-'));
+    try {
+      ensureProjectScaffold(dir);
+      const path = join(dir, 'screen.ptr');
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: '2.22',
+          fileToken: '00000000-0000-4000-8000-0000000000ff',
+          variables: {},
+          children: [
+            {
+              type: 'frame',
+              id: 'board',
+              width: 200,
+              height: 100,
+              children: [
+                { type: 'text', id: 't1', content: 'A', fontSize: 16 },
+                { type: 'text', id: 't2', content: 'B', fontSize: 16 },
+              ],
+            },
+          ],
+        }),
+      );
+
+      const plan = planEstablish(loadDoc(path).doc);
+      expect(plan.tokens.find((t) => t.type === 'fontSize')).toMatchObject({ key: 'fontSize-16', value: '16' });
+
+      applyEstablish(path, plan);
+      const doc = loadDoc(path).doc;
+      const kids = (doc.children[0] as Record<string, unknown>)['children'] as Record<string, unknown>[];
+      expect(kids[0]?.['fontSize']).toBe('$fontSize-16');
+      expect(loadDoc(join(dir, PRESET_FILE)).doc.variables?.['fontSize-16']).toMatchObject({ type: 'number', value: 16 });
+
+      const out = renderDocument(applyProjectPresets(doc, path).doc);
+      expect(out.html).toContain('font-size:16px');
+      expect(out.warnings).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

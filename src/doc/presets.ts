@@ -1,9 +1,55 @@
 /**
- * 预设组（谱式）的纯逻辑：读、渲染前叠加。
+ * 预设（token）与谱式（preset 组）的纯逻辑：类型、属性映射、读组、渲染前叠加。
  *
- * 只做「按名字取组 + 把组属性铺到节点上」这两件事，不碰文件系统——
- * 写盘在 `doc/project.ts`，渲染器只吃这里产出的结构。
+ * 只做不碰文件系统的事——写盘在 `doc/project.ts`，渲染器只吃这里产出的结构。
  */
+
+/**
+ * token 类型：`fontSize` 落盘为 number，`font` 只表示字体族（string）。
+ * 老文件里「`font` + 数字值」在读取时归一成 `fontSize`（见 `project.ts#presetKindOf`）。
+ */
+export type PresetType = 'color' | 'radius' | 'spacing' | 'fontSize' | 'font';
+
+export const PRESET_TYPES: readonly PresetType[] = ['color', 'radius', 'spacing', 'fontSize', 'font'];
+
+export function isPresetType(v: unknown): v is PresetType {
+  return typeof v === 'string' && (PRESET_TYPES as readonly string[]).includes(v);
+}
+
+/**
+ * 属性 → 期望的 token 种类。**唯一映射表**：audit、establish、validate、写入提示都从这里取，
+ * 各处不得再抄一份（2026-11-15：`fontSize` 曾因两处映射不一致而无法 token 化）。
+ *
+ * 刻意不含 `lineHeight`（它是 fontSize 的倍数，塞进任何数字种类都是错语义）；
+ * `fontWeight` 同理（等独立种类，见 `.agents/memory/FUTURE.md`）。
+ */
+export const PROP_TOKEN_KIND: Record<string, PresetType> = {
+  fill: 'color',
+  stroke: 'color',
+  color: 'color',
+  effect: 'color',
+  cornerRadius: 'radius',
+  gap: 'spacing',
+  padding: 'spacing',
+  strokeWidth: 'spacing',
+  letterSpacing: 'spacing',
+  fontSize: 'fontSize',
+  fontFamily: 'font',
+};
+
+/** 种类的人读名（校验与审计的提示语用） */
+export const PRESET_TYPE_LABEL: Record<PresetType, string> = {
+  color: '颜色',
+  radius: '倒角',
+  spacing: '间距',
+  fontSize: '字号',
+  font: '字体族',
+};
+
+/** 值是不是一个数字字串（老 `font` token 靠它识别字号；纯字体族名不会全是数字） */
+export function isNumericPresetValue(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value));
+}
 
 export interface PresetGroup {
   /** 适用的节点类型（frame / text / rectangle …） */

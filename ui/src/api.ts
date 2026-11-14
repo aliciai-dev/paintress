@@ -166,7 +166,7 @@ export function fetchChanges(project: string, file: string): Promise<ChangesResp
 export interface PresetItem {
   /** 变量名，设计稿里写 `$key` */
   key: string;
-  type: 'color' | 'radius' | 'spacing' | 'font';
+  type: 'color' | 'radius' | 'spacing' | 'fontSize' | 'font';
   name: string;
   value: string;
 }

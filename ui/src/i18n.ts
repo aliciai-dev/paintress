@@ -96,6 +96,7 @@ export interface Messages {
   presetGroups: string;
   presetGroupsEmpty: string;
   presetRadius: string;
+  presetFontSize: string;
   componentsEmpty: string;
   componentsHint: string;
   componentsCount: (count: number) => string;
@@ -181,6 +182,7 @@ const MESSAGES: Record<Lang, Messages> = {
     presetGroups: '预设组（谱式）',
     presetGroupsEmpty: '还没有预设组；让 agent 用 preset 把一组属性框起来。',
     presetRadius: '倒角',
+    presetFontSize: '字号',
     componentsEmpty: '还没有组件。让 agent 把做好的组件登记进组件库。',
     componentsHint: '画新组件之前，先看这里有没有能复用的。',
     componentsCount: (count) => `${count} 个组件`,
@@ -264,6 +266,7 @@ const MESSAGES: Record<Lang, Messages> = {
     presetGroups: 'Preset groups',
     presetGroupsEmpty: 'No preset groups yet — ask the agent to define one.',
     presetRadius: 'Corner radius',
+    presetFontSize: 'Font size',
     componentsEmpty: 'No components yet. Ask the agent to register the ones it built.',
     componentsHint: 'Check here before building a new component.',
     componentsCount: (count) => `${count} component${count === 1 ? '' : 's'}`,

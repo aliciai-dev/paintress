@@ -822,7 +822,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             const existing = listPresets(entry.rootReal).items.find((p) => p.key === key);
             const typeRaw = body['type'] ?? existing?.type;
             if (!isPresetType(typeRaw)) {
-              sendJson(400, { ok: false, error: 'type 必须是 color / radius / spacing / font' });
+              sendJson(400, { ok: false, error: 'type 必须是 color / radius / spacing / fontSize / font' });
               return;
             }
             const label = typeof body['name'] === 'string' && body['name'] !== '' ? body['name'] : undefined;

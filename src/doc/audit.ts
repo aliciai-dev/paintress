@@ -1,5 +1,5 @@
 import type { PenDocument } from '../schema/index.js';
-import { presetGroupsOf, type PresetGroup } from './presets.js';
+import { PROP_TOKEN_KIND, presetGroupsOf, type PresetGroup } from './presets.js';
 
 /**
  * 画谱审计（B3）：找出「本该用 token / preset，却写了裸值」的地方，以及
@@ -37,15 +37,6 @@ export interface AuditReport {
   summary: string;
 }
 
-/** 参与「裸值 → token」建议的样式属性；宽高、透明度、文本内容都不在此列 */
-const NUMERIC_PROP_KIND: Record<string, 'radius' | 'spacing' | 'font'> = {
-  cornerRadius: 'radius',
-  gap: 'spacing',
-  padding: 'spacing',
-  strokeWidth: 'spacing',
-  fontSize: 'font',
-};
-const COLOR_STYLE_PROPS = new Set(['fill', 'stroke', 'color', 'effect']);
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -81,10 +72,14 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
   const findings: AuditFinding[] = [];
   const colorTokens = new Map<string, string>();
   const numberTokens = new Map<string, string>();
+  const familyTokens = new Map<string, string>();
   for (const t of input.tokens) {
     if (t.type === 'color') {
       colorTokens.set(t.value.toUpperCase(), t.key);
-    } else if (t.type === 'radius' || t.type === 'spacing' || t.type === 'font') {
+    } else if (t.type === 'font') {
+      // 字体族按字符串精确匹配（栈值也能当 token 用）
+      familyTokens.set(t.value, t.key);
+    } else {
       const n = Number(t.value);
       // key 带上 kind：gap 不能建议成 $radius，fontSize 也不能建议成间距
       if (Number.isFinite(n)) numberTokens.set(`${t.type}:${n}`, t.key);
@@ -140,7 +135,7 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
             for (const [key, entry] of Object.entries(value)) suggestColor(entry, `${path}.${key}`);
           }
         };
-        const suggestNumber = (value: unknown, path: string, kind: 'radius' | 'spacing' | 'font'): void => {
+        const suggestNumber = (value: unknown, path: string, kind: 'radius' | 'spacing' | 'fontSize'): void => {
           if (typeof value === 'number' && Number.isFinite(value)) {
             const hit = numberTokens.get(`${kind}:${value}`);
             if (hit !== undefined) {
@@ -156,11 +151,21 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
             for (const [key, entry] of Object.entries(value)) suggestNumber(entry, `${path}.${key}`, kind);
           }
         };
+        const suggestString = (value: unknown, path: string): void => {
+          if (typeof value !== 'string' || value.startsWith('$')) return;
+          const hit = familyTokens.get(value);
+          if (hit !== undefined) {
+            findings.push({ kind: 'literal', where: id, message: `${path} 写了字体族 "${value}"`, suggestion: `$${hit}` });
+          }
+        };
         for (const [prop, value] of Object.entries(node)) {
           if (prop === 'children') continue;
-          if (COLOR_STYLE_PROPS.has(prop)) suggestColor(value, prop);
-          const kind = NUMERIC_PROP_KIND[prop];
-          if (kind !== undefined) suggestNumber(value, prop, kind);
+          const kind = PROP_TOKEN_KIND[prop];
+          if (kind === 'color') suggestColor(value, prop);
+          else if (kind === 'font') suggestString(value, prop);
+          else if (kind === 'radius' || kind === 'spacing' || kind === 'fontSize') {
+            suggestNumber(value, prop, kind);
+          }
         }
       }
 

@@ -1375,6 +1375,7 @@ export default function App() {
                     color: m().presetColor,
                     radius: m().presetRadius,
                     spacing: m().presetSpacing,
+                    fontSize: m().presetFontSize,
                     font: m().presetFont,
                     groups: m().presetGroups,
                     groupsEmpty: m().presetGroupsEmpty,

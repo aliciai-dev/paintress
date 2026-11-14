@@ -18,6 +18,7 @@ export interface PresetPanelLabels {
   color: string;
   radius: string;
   spacing: string;
+  fontSize: string;
   font: string;
   groups: string;
   groupsEmpty: string;
@@ -42,10 +43,11 @@ function toHex6(value: string): string {
   return '#000000';
 }
 
-const GROUPS: { type: PresetItem['type']; key: 'color' | 'radius' | 'spacing' | 'font' }[] = [
+const GROUPS: { type: PresetItem['type']; key: 'color' | 'radius' | 'spacing' | 'fontSize' | 'font' }[] = [
   { type: 'color', key: 'color' },
   { type: 'radius', key: 'radius' },
   { type: 'spacing', key: 'spacing' },
+  { type: 'fontSize', key: 'fontSize' },
   { type: 'font', key: 'font' },
 ];
 
@@ -102,8 +104,10 @@ export function PresetPanel(props: PresetPanelProps): JSX.Element {
       </Show>
       <input
         class="preset-value"
-        type={item.type === 'radius' || item.type === 'spacing' ? 'number' : 'text'}
-        {...(item.type === 'radius' || item.type === 'spacing' ? { min: '0', step: item.type === 'spacing' ? '0.5' : '1' } : { spellcheck: false })}
+        type={item.type === 'radius' || item.type === 'spacing' || item.type === 'fontSize' ? 'number' : 'text'}
+        {...(item.type === 'radius' || item.type === 'spacing' || item.type === 'fontSize'
+          ? { min: '0', step: item.type === 'spacing' ? '0.5' : '1' }
+          : { spellcheck: false })}
         value={valueOf(item)}
         aria-label={`${item.name} ${props.labels[item.type]}`}
         onInput={(ev) => edit(item.key, ev.currentTarget.value)}
