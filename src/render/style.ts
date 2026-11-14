@@ -23,6 +23,62 @@ function colorFromFillEntry(entry: unknown, vars: VarResolver): string | undefin
   return undefined;
 }
 
+/** 平均色：网格渐变的底色（解析不了就回落首个色） */
+function averageColor(colors: string[]): string {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (const c of colors) {
+    const hex = /^#((?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}))$/.exec(c.trim());
+    if (hex === null) continue;
+    let raw = hex[1] as string;
+    if (raw.length === 3) raw = raw.split('').map((ch) => ch + ch).join('');
+    r += parseInt(raw.slice(0, 2), 16);
+    g += parseInt(raw.slice(2, 4), 16);
+    b += parseInt(raw.slice(4, 6), 16);
+    n += 1;
+  }
+  if (n === 0) return colors[0] ?? '#000000';
+  return `rgb(${Math.round(r / n)} ${Math.round(g / n)} ${Math.round(b / n)})`;
+}
+
+/**
+ * mesh_gradient 近似：每个网格点一层径向渐变（该点颜色 → 透明），
+ * 底下垫一层平均色。浏览器按预乘 alpha 插值，叠出来就是平滑的网格混色。
+ * `columns × rows` 缺省、颜色数不足或网格过大时返回 null（调用方按首个顶点色降级）。
+ */
+function meshLayers(
+  entry: Record<string, unknown>,
+  vars: VarResolver,
+): { images: string[]; base: string; cells: number } | null {
+  const cols = vars.resolveNum(entry['columns'] as number | string);
+  const rows = vars.resolveNum(entry['rows'] as number | string);
+  const raw = entry['colors'];
+  if (cols === undefined || rows === undefined || !Array.isArray(raw)) return null;
+  const c = Math.round(cols);
+  const r = Math.round(rows);
+  if (c < 1 || r < 1) return null;
+  const colors = raw.map((x) => colorFromFillEntry(x, vars));
+  if (colors.length < c * r || colors.some((x) => x === undefined)) return null;
+  const cells = c * r;
+  if (cells > 144) return null; // 144 层以上：收益递减，别把 CSS 撑爆
+  const images: string[] = [];
+  for (let row = 0; row < r; row++) {
+    for (let col = 0; col < c; col++) {
+      const color = colors[row * c + col] as string;
+      const cx = ((col + 0.5) / c) * 100;
+      const cy = ((row + 0.5) / r) * 100;
+      const sx = (100 / c) * 1.4;
+      const sy = (100 / r) * 1.4;
+      images.push(
+        `radial-gradient(ellipse ${sx.toFixed(2)}% ${sy.toFixed(2)}% at ${cx.toFixed(2)}% ${cy.toFixed(2)}%, ${color} 0%, transparent 72%)`,
+      );
+    }
+  }
+  return { images, base: averageColor(colors.filter((x): x is string => x !== undefined)), cells };
+}
+
 function stopsToCssList(colors: unknown, vars: VarResolver): string | undefined {
   if (!Array.isArray(colors) || colors.length === 0) return undefined;
   const parts: string[] = [];
@@ -134,12 +190,18 @@ export function fillsToCss(fillsRaw: unknown, vars: VarResolver, warnings: Warni
         warnings.push(`${what}: 图像填充缺少 url，已跳过`);
       }
     } else if (kind === 'mesh_gradient') {
-      const first = colorFromFillEntry((entry['colors'] as unknown[])?.[0], vars);
-      if (first) {
-        bgColor = first;
-        warnings.push(`${what}: mesh_gradient 降级为首个顶点色`);
+      const mesh = meshLayers(entry, vars);
+      if (mesh !== null) {
+        bgImages.push(...mesh.images);
+        if (bgColor === undefined) bgColor = mesh.base;
       } else {
-        warnings.push(`${what}: mesh_gradient 无法降级，已跳过`);
+        const first = colorFromFillEntry((entry['colors'] as unknown[])?.[0], vars);
+        if (first) {
+          bgColor = first;
+          warnings.push(`${what}: mesh_gradient 网格不完整（或超过 144 格），降级为首个顶点色`);
+        } else {
+          warnings.push(`${what}: mesh_gradient 无法降级，已跳过`);
+        }
       }
     } else if (kind === 'shader') {
       warnings.push(`${what}: shader 填充暂不支持渲染，已跳过`);

@@ -3,6 +3,7 @@ import {
   fillsToCss, strokeToCss, effectsToCss, textToCss, commonToCss, cornerRadiusToCss,
   type CSSDecl,
 } from './style.js';
+import { ellipsePath, needsEllipseSvg, polygonPath, simpleStroke, solidFillColor, type StrokeSpec } from './geometry.js';
 import { getLucideIcon, resolveIconName } from './icons.js';
 import type { PenNode } from '../schema/index.js';
 
@@ -200,6 +201,92 @@ function boardAttrs(node: AnyNode, vars: VarResolver): string[] {
   ];
 }
 
+/** SVG 形状（弧形/圆环/圆角多边形）：路径与颜色都在 SVG 里画，外层 div 只管布局 */
+interface SvgShape {
+  path: string;
+  width: number;
+  height: number;
+  fill: string | null;
+  stroke: StrokeSpec | null;
+  evenodd: boolean;
+}
+
+/** `null` = 走原有渲染；`reason` = 想画但画不了，交给调用方降级并解释一句 */
+type ShapePlan = { shape: SvgShape } | { reason: string } | null;
+
+function planSvgShape(
+  node: AnyNode,
+  type: string,
+  vars: VarResolver,
+): ShapePlan {
+  if (type === 'ellipse') {
+    const sweep = vars.resolveNum(node['sweepAngle'] as number | string);
+    const inner = vars.resolveNum(node['innerRadius'] as number | string);
+    const start = vars.resolveNum(node['startAngle'] as number | string);
+    if (!needsEllipseSvg({ width: 1, height: 1, ...(start !== undefined ? { startAngle: start } : {}), ...(sweep !== undefined ? { sweepAngle: sweep } : {}), ...(inner !== undefined ? { innerRadius: inner } : {}) })) {
+      return null; // 整圆实心：沿用 div，既有产物的像素不变
+    }
+    const w = numericSize(node['width'], vars);
+    const h = numericSize(node['height'], vars);
+    if (w === undefined || h === undefined) return { reason: '弧形/圆环需要显式宽高，暂按整圆渲染' };
+    const rawFill = node['fill'];
+    const fill = rawFill === undefined ? null : solidFillColor(rawFill, vars);
+    if (rawFill !== undefined && fill === null) return { reason: '弧形/圆环只支持纯色填充，暂按整圆/实心渲染' };
+    const stroke = simpleStroke(node, vars);
+    return {
+      shape: {
+        path: ellipsePath({
+          width: w,
+          height: h,
+          ...(start !== undefined ? { startAngle: start } : {}),
+          ...(sweep !== undefined ? { sweepAngle: sweep } : {}),
+          ...(inner !== undefined ? { innerRadius: inner } : {}),
+        }),
+        width: w,
+        height: h,
+        fill,
+        stroke,
+        evenodd: (inner ?? 0) > 0,
+      },
+    };
+  }
+  if (type === 'polygon') {
+    const radius = vars.resolveNum(node['cornerRadius'] as number | string);
+    if (radius === undefined || radius <= 0) return null; // 尖角：沿用 clip-path
+    const w = numericSize(node['width'], vars);
+    const h = numericSize(node['height'], vars);
+    if (w === undefined || h === undefined) return { reason: '多边形圆角需要显式宽高，暂忽略圆角' };
+    const rawFill = node['fill'];
+    const fill = rawFill === undefined ? null : solidFillColor(rawFill, vars);
+    if (rawFill !== undefined && fill === null) return { reason: '多边形圆角只支持纯色填充，暂忽略圆角' };
+    const count = vars.resolveNum(node['polygonCount'] as number | string);
+    return {
+      shape: {
+        path: polygonPath({ width: w, height: h, ...(count !== undefined ? { count } : {}), cornerRadius: radius }),
+        width: w,
+        height: h,
+        fill,
+        stroke: simpleStroke(node, vars),
+        evenodd: false,
+      },
+    };
+  }
+  return null;
+}
+
+function svgShapeHtml(shape: SvgShape): string {
+  const fill = shape.fill === null ? ' fill="none"' : ` fill="${escapeAttr(shape.fill)}"`;
+  const rule = shape.evenodd ? ' fill-rule="evenodd"' : '';
+  const stroke =
+    shape.stroke === null
+      ? ''
+      : ` stroke="${escapeAttr(shape.stroke.color)}" stroke-width="${numStr(shape.stroke.width)}"`;
+  return (
+    `<svg viewBox="0 0 ${numStr(shape.width)} ${numStr(shape.height)}" width="100%" height="100%" preserveAspectRatio="none" style="display:block;width:100%;height:100%">` +
+    `<path d="${escapeAttr(shape.path)}"${fill}${rule}${stroke}/></svg>`
+  );
+}
+
 function renderNode(
   node: AnyNode,
   parentLayout: 'none' | 'horizontal' | 'vertical',
@@ -237,9 +324,13 @@ function renderNode(
   css.push(...sizeDecls(node['width'], node['height'], positioned, parentLayout, scoped, warnings, label));
   css.push(...commonToCss(node, scoped));
 
+  // 弧形/圆环/圆角多边形：几何与颜色都进 SVG，外层不再画背景和边框
+  const plan = planSvgShape(node, type, scoped);
+  const svgShape = plan !== null && 'shape' in plan ? plan.shape : null;
+
   // 文本节点：fill 即字色（textToCss 内处理），不再走 fillsToCss
-  if (type !== 'text') css.push(...fillsToCss(node['fill'], scoped, warnings, label));
-  css.push(...strokeToCss(node, scoped, warnings, label));
+  if (type !== 'text' && svgShape === null) css.push(...fillsToCss(node['fill'], scoped, warnings, label));
+  if (svgShape === null) css.push(...strokeToCss(node, scoped, warnings, label));
   css.push(...effectsToCss(node['effect'], scoped, warnings, label));
 
   let inner = '';
@@ -281,18 +372,23 @@ function renderNode(
       break;
     }
     case 'ellipse': {
+      if (svgShape !== null) {
+        inner = svgShapeHtml(svgShape);
+        break;
+      }
+      if (plan !== null && 'reason' in plan) warnings.push(`${label}: ${plan.reason}`);
       css.push(['border-radius', '50%']);
-      const inner2 = scoped.resolveNum(node['innerRadius'] as number | string);
-      if (inner2 !== undefined && inner2 > 0) warnings.push(`${label}: innerRadius 环形暂按实心椭圆渲染`);
-      const sweep = scoped.resolveNum(node['sweepAngle'] as number | string);
-      if (sweep !== undefined && sweep !== 360) warnings.push(`${label}: 弧形（sweepAngle=${sweep}）暂按整圆渲染`);
       break;
     }
     case 'polygon': {
+      if (svgShape !== null) {
+        inner = svgShapeHtml(svgShape);
+        break;
+      }
       const count = scoped.resolveNum(node['polygonCount'] as number | string);
       const n = count ?? 3;
       if (count === undefined) warnings.push(`${label}: polygonCount 缺省按 3 渲染`);
-      if (node['cornerRadius'] !== undefined) warnings.push(`${label}: 多边形圆角暂忽略`);
+      if (plan !== null && 'reason' in plan) warnings.push(`${label}: ${plan.reason}`);
       css.push(['clip-path', polygonClip(n)]);
       break;
     }
