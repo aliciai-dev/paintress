@@ -18,7 +18,7 @@ The agent does the reading and writing, through MCP tools or the CLI. The browse
 
 | Part | Purpose |
 | --- | --- |
-| MCP tools | paintress_viewer, paintress_new, paintress_doc_info, paintress_query, paintress_get, paintress_update, paintress_insert, paintress_delete, paintress_move, paintress_batch, paintress_validate, paintress_convert, paintress_preset, paintress_font, paintress_audit, paintress_establish, paintress_adjust, paintress_component, paintress_render, paintress_screenshot, paintress_marks |
+| MCP tools | paintress_viewer, paintress_new, paintress_doc_info, paintress_query, paintress_get, paintress_update, paintress_insert, paintress_delete, paintress_move, paintress_batch, paintress_validate, paintress_convert, paintress_preset, paintress_project, paintress_font, paintress_audit, paintress_establish, paintress_adjust, paintress_component, paintress_render, paintress_screenshot, paintress_marks |
 | CLI | the same operations plus the viewer process, for use without an agent |
 | Viewer | local web server: renders a document, highlights changes, hands back clicked nodes as `#1`, `#2`, … |
 | Screenshot | PNG of a canvas or one board; scale 0.2–2 (default 0.8), either edge capped to 8192px |
@@ -27,7 +27,7 @@ The agent does the reading and writing, through MCP tools or the CLI. The browse
 
 New files are `.ptr` — paintress's own flavor of the same JSON design document. Existing `.pen` files open, edit and render unchanged; only the extension differs.
 
-Two project-level files keep a project consistent. They are created automatically when the project is registered, and they belong in version control next to the designs:
+Two project-level files keep a project consistent. They live at the **registered project root** — the directory you watch, not the folder of an individual design file — and they belong in version control next to the designs. `paintress_project` (and the viewer's `designSystem` block) returns their exact paths and reports any nested duplicate that would split the design system:
 
 | File | Holds |
 | --- | --- |

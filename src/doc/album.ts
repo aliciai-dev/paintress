@@ -1,6 +1,6 @@
 import { loadDoc, saveDoc, FileChangedError } from './io.js';
 import { statSync } from 'node:fs';
-import { findProjectRoot, listPresetGroups, listPresets, PRESET_FILE, readPresetFile, setPreset, setPresetGroup } from './project.js';
+import { findProjectRoot, findProjectRootStrict, listPresetGroups, listPresets, PRESET_FILE, readPresetFile, setPreset, setPresetGroup } from './project.js';
 import { presetGroupsOf, type PresetGroup } from './presets.js';
 import type { PenDocument } from '../schema/index.js';
 
@@ -190,8 +190,7 @@ export function applyEstablish(
   if (opts.expectedMtimeMs !== undefined && statSync(designPath).mtimeMs !== opts.expectedMtimeMs) {
     throw new FileChangedError(designPath);
   }
-  const root = findProjectRoot(designPath) ?? null;
-  if (root === null) throw new Error('设计稿不在项目里（找不到 __preset.ptr），先注册项目或建预设文件');
+  const root = findProjectRootStrict(designPath);
   const presetPath = `${root}/${PRESET_FILE}`;
 
   // 候选名来自值/类型，可能撞上项目里已经被手改过的同名定义。
@@ -406,7 +405,7 @@ export function applyAdjust(designPath: string, presetDoc: PenDocument | null, p
     const items = listPresets(designPath).items;
     const existing = items.find((p) => p.key === plan.target);
     if (existing === undefined) throw new Error(`token 不存在：${plan.target}`);
-    const presetPath = `${findProjectRoot(designPath) ?? '.'}/${PRESET_FILE}`;
+    const presetPath = `${findProjectRootStrict(designPath)}/${PRESET_FILE}`;
     setPreset(presetPath, { key: existing.key, type: existing.type, value: plan.value, name: existing.name });
     return { ...plan, applied: true };
   }
@@ -416,7 +415,7 @@ export function applyAdjust(designPath: string, presetDoc: PenDocument | null, p
   const prop = plan.prop;
   if (prop === undefined || prop === '') throw new Error(`adjust 计划缺少组属性名：${plan.target}`);
   const nextProps = { ...group.props, [prop]: plan.value };
-  const presetPath = `${findProjectRoot(designPath) ?? '.'}/${PRESET_FILE}`;
+  const presetPath = `${findProjectRootStrict(designPath)}/${PRESET_FILE}`;
   setPresetGroup(presetPath, { name: plan.target, target: group.target, props: nextProps });
   return { ...plan, applied: true };
 }

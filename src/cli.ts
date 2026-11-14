@@ -7,6 +7,7 @@ import { TOOLS, type ToolOutput } from './mcp/tools.js';
 import { runStdioServer } from './mcp/server.js';
 import { startDaemon, type DaemonHandle } from './web/daemon.js';
 import { isDaemonRunning, sendRequest, attachPersistent, queryDaemon } from './web/client.js';
+import { findProjectRoot, projectFilesInfo, setProjectRoots } from './doc/project.js';
 import { ensureDaemon, reuseDaemon } from './web/spawn.js';
 import {
   CLIENTS,
@@ -26,6 +27,7 @@ import { VERSION } from './shared/version.js';
  *   paintress mcp                                    启动 stdio MCP server
  *   paintress new <file> [--name n] [--width n] [--height n] [--fill c] [--layout l] [--force]
  *   paintress convert <file.pen> [out.ptr] [--force]   把 .pen 转成 .ptr（源文件不动）
+ *   paintress project [dir]                          项目根与两个关键文件（按需创建）
  *   paintress info <file>
  *   paintress query <file> [--type t] [--name n] [--regex] [--id i] [--reusable]
  *   paintress get <file> <id> [--depth n]
@@ -150,6 +152,29 @@ async function call(tool: string, args: Record<string, unknown>): Promise<ToolOu
 }
 
 /** 入口：返回退出码（可单测） */
+/** 当前目录所在项目里两个关键文件的现状（只报告，不创建） */
+function cwdDesignSystem(): ReturnType<typeof projectFilesInfo> | null {
+  try {
+    const root = findProjectRoot(process.cwd());
+    return root === null ? null : projectFilesInfo(root);
+  } catch {
+    return null;
+  }
+}
+
+/** CLI 进程也要用「注册根」解析项目文件：从 daemon 拉一次项目表即可 */
+async function syncProjectRoots(): Promise<void> {
+  if (!isDaemonRunning()) return;
+  try {
+    const res = await sendRequest({ kind: 'status' }, 2000);
+    if (res.ok && 'projects' in res && Array.isArray(res.projects)) {
+      setProjectRoots(res.projects.map((p) => p.root));
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 export async function main(argv: string[]): Promise<number> {
   if (argv[0] === '--version' || argv[0] === '-v' || argv[0] === 'version') {
     console.log(`paintress ${VERSION}`);
@@ -161,6 +186,7 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const { cmd, positionals, flags } = parsed;
+  await syncProjectRoots();
   const [file, a1, a2] = positionals as (string | undefined)[];
 
   try {
@@ -306,7 +332,7 @@ export async function main(argv: string[]): Promise<number> {
       if (running !== null) {
         console.log(
           JSON.stringify(
-            { ok: true, daemon: true, reused: true, pid: running.pid, port: running.port, http: url(running.port) },
+            { ok: true, daemon: true, reused: true, pid: running.pid, port: running.port, http: url(running.port), designSystem: cwdDesignSystem() },
             null,
             2,
           ),
@@ -324,7 +350,7 @@ export async function main(argv: string[]): Promise<number> {
         });
         console.log(
           JSON.stringify(
-            { ok: true, daemon: true, reused: !res.started, pid: res.pid, port: res.port, http: url(res.port) },
+            { ok: true, daemon: true, reused: !res.started, pid: res.pid, port: res.port, http: url(res.port), designSystem: cwdDesignSystem() },
             null,
             2,
           ),
@@ -488,6 +514,14 @@ export async function main(argv: string[]): Promise<number> {
       } else {
         throw new Error(`未知 font 动作：${action}（list / add / remove / default）`);
       }
+      console.log(JSON.stringify(out, null, 2));
+      return 0;
+    }
+
+    if (cmd === 'project') {
+      out = await call('paintress_project', {
+        ...(file !== undefined ? { path: file } : {}),
+      });
       console.log(JSON.stringify(out, null, 2));
       return 0;
     }

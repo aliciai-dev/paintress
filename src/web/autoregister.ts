@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { setProjectRoots } from '../doc/project.js';
 import { attachPersistent, queryDaemon, sendRequest, type AttachHandle } from './client.js';
 import { ensureDaemon } from './spawn.js';
 import { deriveProjectName, sanitizeProjectName } from './paths.js';
@@ -20,6 +21,8 @@ import { openBrowser, projectUrl } from './open-browser.js';
 
 export interface ViewerInfo {
   project: string;
+  /** 注册的项目根（绝对路径）：两个项目文件的唯一位置 */
+  root: string;
   pid: number;
   port: number;
   /** 人可以直接打开的地址（项目深链） */
@@ -42,6 +45,20 @@ export interface EnsureViewerOptions {
  * 连接一断，agent 自动注册的项目会在宽限期后退场。
  */
 const handles = new Map<string, AttachHandle>();
+
+/** 从 daemon 同步「注册根」，让 doc 层的 findProjectRoot 以 watch 为准 */
+let rootsSynced = false;
+async function syncProjectRoots(): Promise<void> {
+  try {
+    const res = await sendRequest({ kind: 'status' }, 2000);
+    if (res.ok && 'projects' in res && Array.isArray(res.projects)) {
+      setProjectRoots(res.projects.map((p) => p.root));
+      rootsSynced = true;
+    }
+  } catch {
+    /* best-effort：拿不到就退回“向上找”，不阻断 */
+  }
+}
 
 /** 进程退出时释放连接（daemon 立刻看到 agent 走了，比等 OS 回收快） */
 export function closeViewerHandles(): void {
@@ -70,9 +87,11 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   const running = await queryDaemon();
   const attached = handles.get(project);
   if (running !== null && attached !== undefined && !attached.isClosed()) {
-    // 快速路径：daemon 活着、连接也活着 → 什么都不做（每次写操作都会走这里）
+    // 快速路径：daemon 活着、连接也活着 → 只补一次根同步（每次写操作都会走这里）
+    if (!rootsSynced) await syncProjectRoots();
     return {
       project,
+      root: dir,
       pid: running.pid,
       port: running.port,
       url: projectUrl(running.port, project),
@@ -91,10 +110,12 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   // 同项目重复注册：旧连接（daemon 重启后必然已死）先放掉，避免 daemon 误判 agent 数量
   attached?.close();
   handles.set(project, await attachPersistent(project));
+  rootsSynced = false;
+  await syncProjectRoots();
 
   // 只在「本次拉起 daemon」时开一次窗口，并直接落在自己的项目上
   if (started) openBrowser(projectUrl(port, project));
-  return { project, pid, port, url: projectUrl(port, project), startedDaemon: started };
+  return { project, root: dir, pid, port, url: projectUrl(port, project), startedDaemon: started };
 }
 
 /**

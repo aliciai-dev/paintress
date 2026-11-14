@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, extname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc, type DocFlavor } from '../doc/io.js';
@@ -15,7 +15,10 @@ import {
   componentsPathFor,
   ensureProjectScaffold,
   findProjectRoot,
+  findProjectRootStrict,
+  projectFilesInfo,
   projectFontRegistry,
+  setProjectRoots,
   projectPresetNames,
   findNodeIn,
   isPresetType,
@@ -351,14 +354,55 @@ export const TOOLS: Record<string, ToolDef> = {
         ...(project !== undefined ? { project } : {}),
         ...(depth !== undefined ? { depth } : {}),
       });
+      // 项目根与两个关键文件：agent 不需要自己找、更不该自己另建
+      const designSystem = projectFilesInfo(info.root, { ensure: true });
       return {
         ok: true,
         project: info.project,
+        root: info.root,
         url: info.url,
         pid: info.pid,
         port: info.port,
         started: info.startedDaemon,
+        designSystem,
       };
+    },
+  },
+
+  paintress_project: {
+    description:
+      'Project design-system files: resolve the registered project root, create __preset.ptr and __components.ptr if missing, and report nested duplicates that would split the design system. Use this instead of creating these files yourself.',
+    inputSchema: {
+      path: z.string().optional().describe('Design file or project directory; defaults to the current working directory'),
+      ensure: z.boolean().optional().describe('Create the two files when missing (default true)'),
+    },
+    run: async (a) => {
+      const from = resolve(optStr(a, 'path') ?? process.cwd());
+      let project: string | null = null;
+      let root: string | null = null;
+      if (isDaemonRunning()) {
+        try {
+          const res = await sendRequest({ kind: 'status' }, 2000);
+          if (res.ok && 'projects' in res && Array.isArray(res.projects)) {
+            // 注册根是唯一权威：顺手把 doc 层的解析表刷新
+            setProjectRoots(res.projects.map((p) => p.root));
+            const abs = resolve(from);
+            const hits = res.projects
+              .filter((p) => abs === p.root || abs.startsWith(`${p.root}${sep}`))
+              .sort((x, y) => y.root.length - x.root.length);
+            const hit = hits[0];
+            if (hit !== undefined) {
+              root = hit.root;
+              project = hit.name;
+            }
+          }
+        } catch {
+          /* daemon 半死不活：退回本地解析 */
+        }
+      }
+      if (root === null) root = findProjectRoot(from) ?? findProjectRootStrict(from);
+      const info = projectFilesInfo(root, { ensure: optBool(a, 'ensure') !== false });
+      return { ok: true, project, ...info };
     },
   },
 
@@ -779,7 +823,7 @@ export const TOOLS: Record<string, ToolDef> = {
         copy['name'] = name;
         stripReusableDeep(copy);
         copy['reusable'] = true;
-        const root = findProjectRoot(sourcePath) ?? dirname(resolve(sourcePath));
+        const root = findProjectRootStrict(sourcePath);
         ensureProjectScaffold(root);
         const compPath = join(root, COMPONENTS_FILE);
         return write(compPath, (doc, mark) => {

@@ -18,7 +18,7 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 
 | 组成 | 作用 |
 | --- | --- |
-| MCP 工具 | paintress_viewer、paintress_new、paintress_doc_info、paintress_query、paintress_get、paintress_update、paintress_insert、paintress_delete、paintress_move、paintress_batch、paintress_validate、paintress_convert、paintress_preset、paintress_font、paintress_audit、paintress_establish、paintress_adjust、paintress_component、paintress_render、paintress_screenshot、paintress_marks |
+| MCP 工具 | paintress_viewer、paintress_new、paintress_doc_info、paintress_query、paintress_get、paintress_update、paintress_insert、paintress_delete、paintress_move、paintress_batch、paintress_validate、paintress_convert、paintress_preset、paintress_project、paintress_font、paintress_audit、paintress_establish、paintress_adjust、paintress_component、paintress_render、paintress_screenshot、paintress_marks |
 | CLI | 同样的操作，外加查看器进程；不接 agent 也能用 |
 | 查看器 | 本地 web 服务：渲染设计稿、高亮变更、把点击的节点变成 `#1`、`#2`… |
 | 截图 | 整张画布或单个画板的 PNG；倍率 0.2–2、默认 0.8，单边最多 8192px |
@@ -27,7 +27,7 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 
 新建的文件是 `.ptr`——同一套 JSON 设计稿的 paintress 风味。已有的 `.pen` 文件照样打开、编辑、渲染，区别只在扩展名。
 
-项目根下有两份文件保证整个项目一致。注册项目时会自动创建，它们和设计稿一样**应该进版本库**：
+项目根下有两份文件保证整个项目一致。它们在**注册的项目根**（也就是你 watch 的目录，不是某张设计稿所在的子目录），注册项目时会自动创建，和设计稿一样**应该进版本库**；`paintress_project`（以及查看器返回的 `designSystem`）会给出确切路径，并报告任何会把设计系统拆开的嵌套副本：
 
 | 文件 | 装什么 |
 | --- | --- |

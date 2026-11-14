@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc } from './io.js';
@@ -46,20 +46,78 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** 目录 → 项目根（最近的含预设/组件文件的祖先目录）；找不到返回 null */
-export function findProjectRoot(from: string): string | null {
+/**
+ * 已注册的项目根（`paintress web` / `paintress watch` 的目录）。
+ *
+ * **注册根优先于「向上找最近的文件」**：设计稿放在 `design/`、而 `design/` 里又有一份
+ * 历史遗留的 `__preset.ptr` 时，向上找会命中错的那一份；watch 才是项目的权威定义。
+ */
+let registeredRoots: string[] = [];
+
+/** 由 daemon / CLI 注入注册根；传空数组等于清空（测试用） */
+export function setProjectRoots(roots: readonly string[]): void {
+  registeredRoots = [...new Set(roots.map((root) => resolve(root)))];
+}
+
+function registeredRootOf(from: string): string | null {
+  const abs = resolve(from);
+  let best: string | null = null;
+  for (const root of registeredRoots) {
+    if (abs === root || abs.startsWith(`${root}${sep}`)) {
+      if (best === null || root.length > best.length) best = root;
+    }
+  }
+  return best;
+}
+
+/** 从 from 向上收集所有「含预设/组件文件」的目录（近 → 远） */
+function ancestorRoots(from: string): string[] {
   let dir = resolve(from);
   try {
     if (!statSync(dir).isDirectory()) dir = dirname(dir);
   } catch {
     dir = dirname(dir);
   }
+  const out: string[] = [];
   for (;;) {
-    if (existsSync(join(dir, PRESET_FILE)) || existsSync(join(dir, COMPONENTS_FILE))) return dir;
+    if (existsSync(join(dir, PRESET_FILE)) || existsSync(join(dir, COMPONENTS_FILE))) out.push(dir);
     const parent = dirname(dir);
-    if (parent === dir || !parent.startsWith(sep)) return null;
+    if (parent === dir || !parent.startsWith(sep)) break;
     dir = parent;
   }
+  return out;
+}
+
+/** 目录 → 项目根（注册根优先；否则最近的含预设/组件文件的祖先）；找不到返回 null */
+export function findProjectRoot(from: string): string | null {
+  return registeredRootOf(from) ?? ancestorRoots(from)[0] ?? null;
+}
+
+/**
+ * 写入用的严格解析：注册根 → 唯一的祖先根 → 显式目录；歧义或无处可写时**直接报错**。
+ * 禁止替一个裸设计稿「就地」建项目文件——那正是 `design/__preset.ptr` 这类脏数据的来源。
+ */
+export function findProjectRootStrict(from: string): string {
+  const registered = registeredRootOf(from);
+  if (registered !== null) return registered;
+  const candidates = ancestorRoots(from);
+  if (candidates.length > 1) {
+    throw new Error(
+      `项目根不唯一：${candidates.join('、')} 都含 ${PRESET_FILE} / ${COMPONENTS_FILE}。\n` +
+        '先运行 paintress web 注册项目（注册目录优先），或显式传入项目目录。',
+    );
+  }
+  if (candidates.length === 1) return candidates[0] as string;
+  const abs = resolve(from);
+  try {
+    if (statSync(abs).isDirectory()) return abs;
+  } catch {
+    /* 不存在：按文件处理 */
+  }
+  throw new Error(
+    `找不到项目根：${from} 不在已注册项目里。\n` +
+      '先在该项目目录下运行 paintress web（会自动建立并返回这两个文件的路径），不要自己另建。',
+  );
 }
 
 /** 传入文件 → 其所在目录；传入目录 → 自身 */
@@ -85,6 +143,68 @@ export function componentsPathFor(from: string): string | null {
   if (root === null) return null;
   const p = join(root, COMPONENTS_FILE);
   return existsSync(p) ? p : null;
+}
+
+/** 根目录下**嵌套**的预设/组件目录（历史遗留或误建）；只报告，不吞掉 */
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.agents', '.paintress', 'coverage']);
+
+export function findNestedProjectFiles(root: string, maxDepth = 4): string[] {
+  const abs = resolve(root);
+  const out: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+      const child = join(dir, entry.name);
+      if (existsSync(join(child, PRESET_FILE)) || existsSync(join(child, COMPONENTS_FILE))) out.push(child);
+      walk(child, depth + 1);
+    }
+  };
+  walk(abs, 1);
+  return out;
+}
+
+export interface ProjectFilesInfo {
+  /** 注册/解析出的项目根（绝对路径） */
+  root: string;
+  presetPath: string;
+  componentsPath: string;
+  presetExists: boolean;
+  componentsExists: boolean;
+  presetTokens: number;
+  presetGroups: number;
+  components: number;
+  /** 根下嵌套的另一套（应删除或合并；写入前必须让 agent 知道） */
+  conflicts: string[];
+}
+
+/** 项目里两个关键文件的现状；`ensure` 为 true 时先按需创建（只在项目根，绝不在子目录） */
+export function projectFilesInfo(root: string, opts: { ensure?: boolean } = {}): ProjectFilesInfo {
+  const abs = resolve(root);
+  if (opts.ensure === true) ensureProjectScaffold(abs);
+  const presetPath = join(abs, PRESET_FILE);
+  const componentsPath = join(abs, COMPONENTS_FILE);
+  const presetExists = existsSync(presetPath);
+  const componentsExists = existsSync(componentsPath);
+  const file = presetExists ? readPresetFile(presetPath) : null;
+  const groups = file === null ? {} : presetGroupsOf(file.doc);
+  return {
+    root: abs,
+    presetPath,
+    componentsPath,
+    presetExists,
+    componentsExists,
+    presetTokens: file?.items.length ?? 0,
+    presetGroups: Object.keys(groups).length,
+    components: componentsExists ? listComponents(componentsPath).length : 0,
+    conflicts: findNestedProjectFiles(abs),
+  };
 }
 
 function presetKindOf(key: string, doc: PenDocument): PresetType | null {
@@ -323,8 +443,8 @@ export function setPreset(from: string, input: SetPresetInput): PresetItem[] {
 
   let path = presetPathFor(from);
   if (path === null) {
-    // 没有项目文件就当场初始化（CLI / MCP 不该强制先起 daemon 才能写预设）
-    const root = findProjectRoot(from) ?? projectDirOf(from);
+    // 只在**项目根**初始化；裸设计稿不许就地建（否则会出现 design/__preset.ptr 这类脏数据）
+    const root = findProjectRootStrict(from);
     ensureProjectScaffold(root);
     path = join(root, PRESET_FILE);
   }
@@ -396,7 +516,7 @@ export function setPresetGroup(from: string, input: SetPresetGroupInput): Preset
 
   let path = presetPathFor(from);
   if (path === null) {
-    const root = findProjectRoot(from) ?? projectDirOf(from);
+    const root = findProjectRootStrict(from);
     ensureProjectScaffold(root);
     path = join(root, PRESET_FILE);
   }
@@ -505,7 +625,7 @@ export function projectFontRegistry(from: string): FontRegistryFile {
 function presetFileForWrite(from: string): { path: string; file: PresetFile | null } {
   let path = presetPathFor(from);
   if (path === null) {
-    const root = findProjectRoot(from) ?? projectDirOf(from);
+    const root = findProjectRootStrict(from);
     ensureProjectScaffold(root);
     path = join(root, PRESET_FILE);
   }

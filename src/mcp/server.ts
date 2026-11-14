@@ -27,6 +27,7 @@ WORKFLOW: \`paintress_new\` → \`paintress_query\`/\`paintress_get\` for real n
 \`#1\` in the conversation is a click marker from the viewer: resolve it with \`paintress_marks\`.
 
 DESIGN SYSTEM — one source of truth; do not paste values:
+- Run \`paintress_project\` (or read \`designSystem\` from \`paintress_viewer\`) for the project root and the two files; never create \`__preset.ptr\` / \`__components.ptr\` yourself.
 - Before the first shape call \`paintress_preset list\`; if it is empty use \`paintress_preset seed\` (dry-run, then apply) or set tokens, and reference them as \`$key\`.
 - Before building a button, card or input call \`paintress_component list\`; insert one that fits. Use \`paintress_component add\` once the same shape is needed a second time.
 - \`paintress_font list\` shows the font registry; register families with a source and a preview. Text without a fontFamily uses the default and is reported on every read — close that gap.

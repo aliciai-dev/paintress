@@ -36,7 +36,7 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 
 | Tool | What it does |
 | --- | --- |
-| `paintress_viewer` | **ensure the viewer is up** and register the project; idempotent |
+| `paintress_viewer` | **ensure the viewer is up** and register the project; idempotent; returns the project root and the two design-system files |
 | `paintress_new` | **create a design file.** Writes a valid document with one empty board; returns the `boardId`. Refuses to overwrite; a `path` without an extension gets the default one |
 | `paintress_convert` | convert a `.pen` file to `.ptr` (fresh `fileToken` + metadata; source untouched; refuses to overwrite) |
 | `paintress_doc_info` | document summary: version, format flavor, node counts, variables, top-level nodes |
@@ -57,6 +57,7 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 | `paintress_establish` | propose tokens / preset groups from repeated literals; dry-run by default, `apply: true` writes |
 | `paintress_adjust` | preview the affected nodes of a token or group edit; dry-run by default, `apply: true` writes only `__preset.ptr` |
 | `paintress_component` | project component library: `list` reusable components, `insert` one as a copy |
+| `paintress_project` | project root + `__preset.ptr` / `__components.ptr`: returns paths, creates them if missing, reports nested duplicates |
 
 ## Design system: presets and components
 

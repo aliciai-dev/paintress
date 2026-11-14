@@ -32,6 +32,7 @@ import {
   presetPathFor,
   projectFontRegistry,
   readTextIfExists,
+  setProjectRoots,
   setPreset,
   type PresetType,
 } from '../doc/project.js';
@@ -292,6 +293,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const releaseLock = acquireLock();
   const registry = new Registry();
   const marks = new MarksStore();
+  /** daemon 自己也是 doc 层的一个调用方：注册根就是它的项目表 */
+  const syncProjectRoots = (): void => setProjectRoots(registry.all().map((p) => p.root));
   const fontReports = new FontReportStore();
   const changes = new ChangesStore();
   const watchers = new WatchManager();
@@ -472,6 +475,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               } catch (cause) {
                 process.stderr.write(`paintress web: 项目脚手架创建失败（${cause instanceof Error ? cause.message : String(cause)}）\n`);
               }
+              syncProjectRoots();
               reply({ ok: true, watched: true, project: registry.info(entry) });
               notifyRegistry();
               break;
@@ -479,6 +483,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             case 'unwatch': {
               const before = registry.get(req.project);
               const removed = before === undefined ? false : detachProject(before, 'unwatch');
+              syncProjectRoots();
               reply({ ok: true, unwatched: removed });
               break;
             }
