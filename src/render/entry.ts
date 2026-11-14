@@ -29,9 +29,16 @@ export interface RenderOptions {
 export function renderDocument(doc: PenDocument, opts: RenderOptions = {}): RenderResult {
   const warnings: Warnings = [];
   const vars = makeVarResolver(doc, warnings);
-  const expanded = expandRefs(doc, warnings);
-  // 谱式：`preset: '<name>'` 的节点先铺组属性（节点自己的属性优先），再进布局与渲染
-  const withPresets = applyPresetRefs(expanded, presetGroupsOf(doc), warnings);
+  const groups = presetGroupsOf(doc);
+  // ref 的 target 按原始节点类型校验；先套一次，expandRefs 才会把组属性带到实例根。
+  const seeded = applyPresetRefs(doc.children, groups, warnings);
+  const expanded = expandRefs({ ...doc, children: seeded }, warnings);
+  // 展开后再套一次：覆盖组件定义与 descendants 里新出现的 preset 引用。
+  const postWarnings: string[] = [];
+  const withPresets = applyPresetRefs(expanded, groups, postWarnings);
+  for (const message of postWarnings) {
+    if (!warnings.includes(message)) warnings.push(message);
+  }
   const canvas = computeCanvas(withPresets, vars);
   const boards = boardBoxes(withPresets, vars);
   const title = opts.title ?? 'paintress render';

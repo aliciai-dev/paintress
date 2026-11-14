@@ -45,7 +45,10 @@ export interface FilesResponse {
 /** 单节点（属性面板）：磁盘上的原始节点 + 变量表（项目预设打底、本地优先） */
 export interface NodeResponse {
   ok: boolean;
+  /** 节点自身字段，不含 children（避免选中画板时把整份稿传一遍） */
   node: Record<string, unknown>;
+  /** 直接子节点数 */
+  childrenCount: number;
   vars: Record<string, string>;
 }
 

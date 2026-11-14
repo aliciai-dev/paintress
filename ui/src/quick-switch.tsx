@@ -93,50 +93,52 @@ export function QuickSwitch(props: QuickSwitchProps): JSX.Element {
       initialFocus={() => inputEl}
       class="quick-switch-modal"
     >
-      <input
-        class="qs-input"
-        ref={(el) => {
-          inputEl = el;
-        }}
-        type="text"
-        value={query()}
-        placeholder={props.labels.placeholder}
-        onInput={(ev) => {
-          setQuery(ev.currentTarget.value);
-          setActive(0);
-        }}
-        onKeyDown={onKeyDown}
-        aria-label={props.labels.placeholder}
-      />
-      <Show
-        when={hits().length > 0}
-        fallback={<p class="qs-empty">{props.labels.empty}</p>}
-      >
-        <ul class="qs-list" ref={(el) => { listEl = el; }}>
-          <For each={hits()}>
-            {(file, i) => {
-              const parts = splitFile(file);
-              return (
-                <li>
-                  <button
-                    type="button"
-                    class="qs-item"
-                    classList={{ active: i() === active(), current: file === props.current }}
-                    onMouseEnter={() => setActive(i())}
-                    onClick={() => pick(file)}
-                  >
-                    <Show when={parts.dir !== ''}>
-                      <span class="qs-dir">{parts.dir}</span>
-                    </Show>
-                    <span class="qs-name">{parts.name}</span>
-                  </button>
-                </li>
-              );
-            }}
-          </For>
-        </ul>
-      </Show>
-      <p class="qs-hint">{props.labels.hint}</p>
+      {/* 键盘处理放在容器上：Tab 到结果按钮后，↑↓ / Enter 仍然可用 */}
+      <div class="qs-body" onKeyDown={onKeyDown}>
+        <input
+          class="qs-input"
+          ref={(el) => {
+            inputEl = el;
+          }}
+          type="text"
+          value={query()}
+          placeholder={props.labels.placeholder}
+          onInput={(ev) => {
+            setQuery(ev.currentTarget.value);
+            setActive(0);
+          }}
+          aria-label={props.labels.placeholder}
+        />
+        <Show
+          when={hits().length > 0}
+          fallback={<p class="qs-empty">{props.labels.empty}</p>}
+        >
+          <ul class="qs-list" ref={(el) => { listEl = el; }}>
+            <For each={hits()}>
+              {(file, i) => {
+                const parts = splitFile(file);
+                return (
+                  <li>
+                    <button
+                      type="button"
+                      class="qs-item"
+                      classList={{ active: i() === active(), current: file === props.current }}
+                      onMouseEnter={() => setActive(i())}
+                      onClick={() => pick(file)}
+                    >
+                      <Show when={parts.dir !== ''}>
+                        <span class="qs-dir">{parts.dir}</span>
+                      </Show>
+                      <span class="qs-name">{parts.name}</span>
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+        </Show>
+        <p class="qs-hint">{props.labels.hint}</p>
+      </div>
     </Modal>
   );
 }

@@ -1,5 +1,5 @@
 import { DocumentSchema, KNOWN_NODE_TYPES, VARIABLE_NAME } from '../schema/index.js';
-import type { PresetGroup } from './presets.js';
+import { presetGroupsOf, type PresetGroup } from './presets.js';
 import { collectIds } from './id.js';
 
 /** 校验结果：errors 阻断写入，warnings 不阻断 */
@@ -41,6 +41,8 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
     return { ok: false, errors, warnings };
   }
   const doc = parsed.data;
+  // 与渲染同一优先级：项目组打底、文档内组覆盖；否则同文档组会被误报成悬空引用
+  const presetGroups = { ...(opts.presetGroups ?? {}), ...presetGroupsOf(doc) };
 
   // 重复 id
   const allIds = collectIds(doc.children);
@@ -70,7 +72,7 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
       }
       const presetName = rec['preset'];
       if (typeof presetName === 'string' && presetName !== '') {
-        const group = opts.presetGroups?.[presetName];
+        const group = presetGroups[presetName];
         if (group === undefined) {
           warnings.push({ level: 'warning', path: here, message: `preset "${presetName}" 不存在` });
         } else if (group.target !== type) {
@@ -88,7 +90,7 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
   walk(doc.children, 'children');
 
   // 谱式本身的越界：属性值必须是 $token，不能是裸值
-  for (const [name, group] of Object.entries(opts.presetGroups ?? {})) {
+  for (const [name, group] of Object.entries(presetGroups)) {
     for (const [prop, value] of Object.entries(group.props)) {
       if (!VARIABLE_NAME.test(value)) {
         warnings.push({
@@ -119,6 +121,10 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
     else if (obj && typeof obj === 'object') Object.values(obj).forEach(scan);
   };
   scan(doc.children);
+  // 组属性也是变量引用点：$token 写错名字不能靠「它不是裸值」而漏检
+  for (const group of Object.values(presetGroups)) {
+    for (const value of Object.values(group.props)) scan(value);
+  }
   for (const name of varRefs) {
     if (!varNames.has(name)) {
       warnings.push({ level: 'warning', path: '<variables>', message: `字段引用了未定义的变量 $${name}` });

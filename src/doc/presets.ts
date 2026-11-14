@@ -56,7 +56,12 @@ export function applyPresetRefs<T>(nodes: T[], groups: Record<string, PresetGrou
         if (group === undefined) {
           warnings.push(`${label}: preset "${name}" 不存在`);
         } else if (group.target !== node['type']) {
-          warnings.push(`${label}: preset "${name}" 适用于 ${group.target}，节点是 ${String(node['type'])}`);
+          // 展开前已经套到 ref 上的组属性会被 expandRefs 复制到组件根；
+          // 第二遍看到 target=ref → type=frame 不算新的不匹配。
+          const alreadyApplied = Object.entries(group.props).every(([key, value]) => node[key] === value);
+          if (!alreadyApplied) {
+            warnings.push(`${label}: preset "${name}" 适用于 ${group.target}，节点是 ${String(node['type'])}`);
+          }
         } else {
           node = { ...group.props, ...node };
         }

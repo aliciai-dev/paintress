@@ -18,10 +18,10 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 
 | 组成 | 作用 |
 | --- | --- |
-| MCP 工具 | 确保查看器在跑、新建、查询、读取、更新、插入、删除、移动、批量、校验、渲染、截图 |
+| MCP 工具 | 确保查看器在跑、新建、查询、读取、更新、插入、删除、移动、批量、校验、渲染、截图、画谱审计/提取/调整 |
 | CLI | 同样的操作，外加查看器进程；不接 agent 也能用 |
 | 查看器 | 本地 web 服务：渲染设计稿、高亮变更、把点击的节点变成 `#1`、`#2`… |
-| 截图 | 整张画布的 PNG，给能看图的 agent 用 |
+| 截图 | 整张画布或单个画板的 PNG；倍率 0.2–2、默认 0.8，单边最多 8192px |
 
 ## 环境要求
 
@@ -59,10 +59,13 @@ paintress delete <file> <id>                           删除节点
 paintress move <file> <id> <parent> [--index n]        移动节点
 paintress batch <file> '<ops-json>'                    一次执行多个操作
 paintress validate <file>                              按格式规格校验
-paintress preset list|set|remove ...                   项目预设（颜色 / 倒角）
+paintress preset list|set|remove|set-group|remove-group ...  项目画谱（颜色/倒角/间距/字体与 preset 组）
+paintress audit <file>                            画谱审计（只读）
+paintress establish <file> [--apply]             提取 token / preset 组（默认只给建议）
+paintress adjust <file> --key k --value v [--apply]  调整画谱（默认只看影响面）
 paintress component list|insert ...                    项目组件库
 paintress render <file> <out.html>                     渲染为 HTML
-paintress shot <file> <out.png> [--scale n]            渲染为 PNG
+paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  渲染为 PNG（默认 0.8）
 
 paintress web [--port n] [--idle ms] [--foreground]  确保查看器在跑（幂等，立刻返回）
 paintress ping | status | stop                         查看器控制
@@ -88,9 +91,9 @@ agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在�
 
 设计稿旁边放一份同名 Markdown（`home.ptr` → `home.md`），画布左上角就会出现「笔记」按钮。点开后画布向右收窄、左侧切出笔记——只读：这份设计是干什么的、还有哪些待定、对应哪条需求。
 
-右上角的浮动工具条放的是这个项目的设计系统。**预设**是项目里的颜色和倒角：agent 只写引用（`$color-brand`），不贴裸值；你在这里改一个值，画布立刻变——不用再说「红一点、再蓝一点」。**组件**是只读画廊，把 agent 已经做好的可复用组件摊开给你看进度，也让 agent 动手前先来这儿找。
+右上角的浮动工具条放的是这个项目的设计系统。**预设**是项目里的颜色、倒角、间距和字体值：agent 只写引用（`$color-brand`），不贴裸值；你在这里改一个值，画布立刻变——不用再说「红一点、再蓝一点」。节点还可以用 `preset` 引用一整组属性（谱式），面板里只读展示这些组。**组件**是只读画廊，把 agent 已经做好的可复用组件摊开给你看进度，也让 agent 动手前先来这儿找。
 
-画布操作：滚轮以指针为锚点缩放，空格 / 中键 / 空白处拖拽平移，`Ctrl/Cmd+0` 回到 100%，`Shift+1` 适应窗口。多画板文件会显示画板条。通过 CLI 或 MCP 做的修改会在查看器里高亮，点击会让节点获得短号，agent 用 `paintress_marks` 读回。
+画布操作：滚轮以指针为锚点缩放，空格 / 中键 / 空白处拖拽平移，`Ctrl/Cmd+0` 回到 100%，`Shift+1` 适应窗口，`Ctrl/Cmd+K` 快速切换设计稿。点中节点会打开只读属性面板。多画板文件会显示画板条；选中具体画板后可按 0.5x / 1x / 2x 导出 PNG（1x = 画板设计像素）。通过 CLI 或 MCP 做的修改会在查看器里高亮，点击会让节点获得短号，agent 用 `paintress_marks` 读回。
 
 查看器跟着 agent 走，不需要人管：agent 起查看器时窗口自己开在它那个项目上；项目随 agent 来去，带进出场动画。**最后一个项目被收走、或服务被关掉（侧栏 Stop server、空闲退出）时，页面自己倒计时十秒再关窗**——不用人去点标签页的 ×。没人看的浏览器也不再拖着进程不放。
 

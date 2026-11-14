@@ -70,7 +70,7 @@ const NO_OPEN_FLAG = 'no-open';
 
 const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', NO_OPEN_FLAG]);
 /** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
-const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', NO_OPEN_FLAG]);
+const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', 'apply', NO_OPEN_FLAG]);
 
 /** 纯函数：argv → 命令 + 位置参数 + 标志（可单测） */
 export function parseArgv(argv: string[]): ParsedCommand | null {
@@ -120,6 +120,15 @@ function flagNum(f: Record<string, string | boolean>, key: string): number | und
   if (v === undefined) return undefined;
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0) throw new Error(`--${key} 需要非负整数，收到：${v}`);
+  return n;
+}
+
+/** 连续数值参数（截图倍率 0.2–2）；与整数参数分开，不能把 0.8 当成非法 */
+function flagDecimal(f: Record<string, string | boolean>, key: string): number | undefined {
+  const v = flagStr(f, key);
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`--${key} 需要数字，收到：${v}`);
   return n;
 }
 
@@ -540,7 +549,7 @@ export async function main(argv: string[]): Promise<number> {
         out = await call('paintress_screenshot', {
           path: file,
           out: a1,
-          ...(flagNum(flags, 'scale') !== undefined ? { scale: flagNum(flags, 'scale') } : {}),
+          ...(flagDecimal(flags, 'scale') !== undefined ? { scale: flagDecimal(flags, 'scale') } : {}),
           ...(board !== undefined ? { board } : {}),
         });
         break;

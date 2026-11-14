@@ -20,7 +20,7 @@ operator 2026-11-14 点名：在查看器里选中一个画板后直接下载这
 ## 方案
 
 - **服务端**：`GET /api/export?project=<name>&path=<rel>&board=<id|name>&scale=<0.5|1|2>`
-  → 用 `screenshotPen(file, tmp, { board, scale })` 写到临时文件，流式回传后删除；
+  → 用 `screenshotPen(file, tmp, { board, scale })` 写到临时文件，读取回传后删除；
   `Content-Type: image/png`、`Content-Disposition: attachment; filename="..."`、`Cache-Control: no-store`、
   `X-Paintress-Scale: <实际倍率>`（被 8192 压回时与请求值不同）。
   无 Chromium → 501 + 可读提示（复用 `findBrowser()` 的判定）。

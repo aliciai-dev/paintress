@@ -548,7 +548,7 @@ export default function App() {
       if (isTyping(ev)) return;
       // Ctrl/Cmd+K：快速切换设计稿（输入框里不拦，见 specs/viewer-file-switcher.md）
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k') {
-        if (activeProject() !== null) {
+        if (activeProject() !== null && files().length > 0) {
           ev.preventDefault();
           setSwitcherOpen(true);
         }
@@ -870,6 +870,7 @@ export default function App() {
         persistViewport(vp);
       },
       onLevelStep: stepLevel,
+      onQuickSwitch: () => setSwitcherOpen(true),
     });
     setBoards(readBoards());
     setActiveBoard(null);

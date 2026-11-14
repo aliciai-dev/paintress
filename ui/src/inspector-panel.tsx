@@ -97,6 +97,13 @@ function rowsOf(node: Record<string, unknown>, key: keyof InspectorLabels['group
   return out;
 }
 
+/** ref.descendants 是「后代路径 → 覆写」的对象映射；数组只作旧数据兜底 */
+function descendantCount(node: Record<string, unknown> | null): number {
+  const raw = node?.['descendants'];
+  if (Array.isArray(raw)) return raw.length;
+  return raw !== null && typeof raw === 'object' ? Object.keys(raw).length : 0;
+}
+
 export function InspectorPanel(props: InspectorPanelProps): JSX.Element {
   const node = (): Record<string, unknown> | null => props.node;
 
@@ -106,8 +113,8 @@ export function InspectorPanel(props: InspectorPanelProps): JSX.Element {
         when={node() !== null}
         fallback={<p class="empty">{props.labels.empty}</p>}
       >
-        <Show when={Array.isArray(node()?.['descendants']) ? (node()?.['descendants'] as unknown[]).length : 0}>
-          <p class="insp-note">{props.labels.descendants((node()?.['descendants'] as unknown[]).length)}</p>
+        <Show when={descendantCount(node()) > 0}>
+          <p class="insp-note">{props.labels.descendants(descendantCount(node()))}</p>
         </Show>
         <For each={GROUPS}>
           {(group) => {

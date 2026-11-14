@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -121,6 +121,25 @@ if (!hasBrowser) {
       const png1 = join(tmp, 'out1.png');
       await screenshotPen(penFile, png1, { scale: 1, settleMs: 200 });
       expect(readFileSync(png1).length).toBeLessThan(readFileSync(pngFile).length);
+    }, BROWSER_TIMEOUT_MS);
+
+    it('8192 单边上限：2x 超出时等比压回，产物不超上限', async () => {
+      const huge = join(tmp, 'huge.pen');
+      writeFileSync(
+        huge,
+        JSON.stringify({
+          version: '2.22',
+          children: [{ type: 'frame', id: 'huge', x: 0, y: 0, width: 5000, height: 1000, fill: '#FFFFFF' }],
+        }),
+      );
+      const out = join(tmp, 'huge.png');
+      const res = await screenshotPen(huge, out, { board: 'huge', scale: 2, settleMs: 50 });
+      expect(res.scale).toBeCloseTo(MAX_SHOT_EDGE / 5000, 6);
+      const size = pngSize(readFileSync(out));
+      expect(size.width).toBeLessThanOrEqual(MAX_SHOT_EDGE);
+      expect(size.height).toBeLessThanOrEqual(MAX_SHOT_EDGE);
+      expect(size.width / size.height).toBeCloseTo(5, 1);
+      expect(res.warnings.join('\n')).toContain('8192');
     }, BROWSER_TIMEOUT_MS);
 
     it('按画板 id 截图：产物尺寸 = 画板尺寸 × scale', async () => {

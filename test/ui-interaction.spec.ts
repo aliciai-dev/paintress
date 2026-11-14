@@ -37,6 +37,24 @@ beforeAll(async () => {
   copyFileSync(join(import.meta.dirname, 'fixtures/basic.pen'), join(dir, 'second.ptr'));
   // 多画板稿：画板条与单帧导出控件
   copyFileSync(join(import.meta.dirname, 'fixtures/boards.pen'), join(dir, 'boards.ptr'));
+  // ref.descendants 是对象映射：属性面板要统计覆写条数
+  writeFileSync(
+    join(dir, 'refs.ptr'),
+    JSON.stringify({
+      version: '2.22',
+      fileToken: '00000000-0000-4000-8000-0000000000dd',
+      children: [
+        {
+          type: 'frame', id: 'button', reusable: true, x: 0, y: 0, width: 100, height: 40,
+          children: [{ type: 'text', id: 'label', content: 'Button', fontSize: 14 }],
+        },
+        {
+          type: 'ref', id: 'instance', ref: 'button', x: 160, y: 0, width: 100, height: 40,
+          descendants: { label: { content: 'Go' } },
+        },
+      ],
+    }),
+  );
   daemon = await startDaemon({ port: 0, idleTimeoutMs: 10 * 60_000, idleCheckMs: 5_000, quiet: true });
   await sendRequest({ kind: 'watch', project: PROJECT, dir });
   setPreset(dir, { key: 'color-brand', type: 'color', value: '#3B82F6', name: '主色' });
@@ -145,6 +163,19 @@ browserDescribe('查看器交互（真实浏览器）', () => {
     }
   });
 
+  it('属性面板：ref.descendants 按对象键数显示覆写条数', async () => {
+    if (browser === undefined) throw new Error('浏览器未就绪');
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    try {
+      await page.goto(`http://127.0.0.1:${daemon.port}/${PROJECT}?file=refs.ptr`, { waitUntil: 'domcontentloaded' });
+      await page.frameLocator('.preview').locator('[data-node-id="instance"]').click();
+      await page.waitForSelector('.inspector-panel .insp-note');
+      expect(await page.locator('.inspector-panel .insp-note').innerText()).toMatch(/1/);
+    } finally {
+      await page.close();
+    }
+  });
+
   it('快速切换：Ctrl+K 过滤 + Enter 打开，不新增浏览历史', async () => {
     const page = await openViewer();
     try {
@@ -173,6 +204,20 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       await page.waitForSelector('.qs-empty');
       await page.locator('.qs-input').press('Enter');
       expect(page.url()).toContain('second.ptr');
+
+      // 焦点在 iframe 文档里时，Ctrl+K 仍然打开（事件不会冒泡到父 window）
+      await page.keyboard.press('Escape');
+      await page.frameLocator('.preview').locator('body').click({ position: { x: 2, y: 2 } });
+      await page.keyboard.press('Control+k');
+      await page.waitForSelector('.qs-input');
+
+      // Tab 到结果按钮后，↑↓ / Enter 仍由容器接管，不是只在输入框可用
+      await page.locator('.qs-input').fill('design');
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.qs-list', { state: 'detached' });
+      expect(page.url()).toContain('design.ptr');
     } finally {
       await page.close();
     }
@@ -193,6 +238,15 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       expect(await scale.locator('option').count()).toBe(3); // 0.5 / 1 / 2
       await scale.selectOption('2');
       expect(await page.evaluate(() => (globalThis as any).localStorage.getItem('paintress:export-scale'))).toBe('2');
+
+      // 真下载一次：Content-Disposition 让浏览器保存文件，不导航、不加历史
+      const historyBefore = await page.evaluate(() => (globalThis as any).history.length as number);
+      const downloadEvent = page.waitForEvent('download');
+      await page.locator('.boardbar-export button').click();
+      const download = await downloadEvent;
+      expect(download.suggestedFilename()).toContain('@2x.png');
+      expect(await page.evaluate(() => (globalThis as any).history.length as number)).toBe(historyBefore);
+
       // 回到「全部」→ 控件收起
       await page.locator('.boardbar .board').nth(0).click();
       await page.waitForSelector('.boardbar-export', { state: 'detached' });

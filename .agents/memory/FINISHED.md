@@ -208,3 +208,10 @@
   `paintress_preset` 增 set-group / remove-group；预设面板按 kind 分组 + 组只读展示。
 - 工具数 16 → 19；质量基线：双端 `tsc` 0 错误、**27 文件 350 用例全绿**、`pnpm build` 通过。
 - 证据：`.agents/implementations/2026-11-14_2054_album-b-batch.md`；决策 `ARCHITECTURE.md#D-010`。
+
+### A/B/C 批次审查与边界修复（2026-11-14）
+
+- 审查范围为该批次的六个提交；确认并修复：空弧整圆、非正多边形圆角角度、iframe 焦点快捷键、ref descendants 计数、节点接口整树回传、CLI 小数倍率与 --apply、文档内 preset 组校验、establish 的字段越界/非法 key/类型混淆/覆盖与 mtime 风险、adjust 嵌套引用与空属性名、audit 的文本误判与数值类型混淆、ref 实例的 preset target。
+- 同步 README、SKILL 与单元规格；剩余跨文件事务、SVG 描边对齐、精确 mesh、导出并发/内存、全项目 dry-run 范围记录在审查报告中。
+- 质量基线：双端 `tsc` 0 错误、**28 文件 371 用例全绿**、`pnpm build` 通过。
+- 证据：`.agents/implementations/2026-11-14_2140_review-abc-batch.md`。

@@ -48,18 +48,23 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 | `paintress_batch` | several operations in one call |
 | `paintress_validate` | check the document against the format spec |
 | `paintress_render` | write the canvas as a standalone HTML file |
-| `paintress_screenshot` | render to PNG (headless Chromium); pass `board` (id or name) to capture one board instead of the whole canvas |
+| `paintress_screenshot` | render to PNG (headless Chromium); `scale` is 0.2–2 (default **0.8** for agent review), 1x = design pixels, either edge capped to 8192px proportionally; pass `board` (id or name) to capture one board |
 | `paintress_marks` | read the user's click markers (`#1 → node id`) |
-| `paintress_preset` | project presets (colors / corner radii): `list`, `set`, `remove` |
+| `paintress_preset` | project tokens (colors / radii / spacing / fonts) and preset groups: `list`, `set`, `remove`, `set-group`, `remove-group` |
+| `paintress_audit` | read-only design-system audit: literal values that could be tokens, orphan tokens, unused or dangling preset groups |
+| `paintress_establish` | propose tokens / preset groups from repeated literals; dry-run by default, `apply: true` writes |
+| `paintress_adjust` | preview the affected nodes of a token or group edit; dry-run by default, `apply: true` writes only `__preset.ptr` |
 | `paintress_component` | project component library: `list` reusable components, `insert` one as a copy |
 
 ## Design system: presets and components
 
 Two project-level files keep a design consistent. Both are created automatically when the project is registered; the human never has to manage them.
 
-**Presets (`__preset.ptr`) — colors and corner radii live in one place.**
-- Before the first shape of a session, call `paintress_preset` with `action: "list"`. If it is empty, propose a small palette and a radius scale, then register each one with `action: "set"` (`type: "color"` or `type: "radius"`).
+**Presets (`__preset.ptr`) — colors, corner radii, spacing and font values live in one place.**
+- Before the first shape of a session, call `paintress_preset` with `action: "list"`. If it is empty, propose a small palette and a radius/spacing scale, then register each one with `action: "set"` (`type: "color"`, `"radius"`, `"spacing"` or `"font"`).
 - In the design, **always reference a preset** (`"fill": "$color-brand"`), never paste a raw hex or radius when a preset exists. Raw values are how the design drifts.
+- A preset group applies a set of token references to one node type (`action: "set-group"`, with `target` and `props`); a node opts in with `"preset": "<group>"`. Its own explicit properties still win.
+- Use `paintress_audit` to find drift. `paintress_establish` and `paintress_adjust` are dry-run by default; inspect the proposed changes before passing `apply: true`.
 - The human tunes preset values in the viewer and the canvas updates instantly. Do not overwrite a preset value unless asked — that is their knob.
 
 **Components (`__components.ptr`) — look before you build.**

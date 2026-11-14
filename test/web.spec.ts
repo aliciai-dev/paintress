@@ -393,6 +393,14 @@ describe('单节点接口（属性面板）', () => {
     expect(body.vars['accent']).toBe('#6BA3FF');
   });
 
+  it('选中画板也不回传整份子树，只给直接子节点数', async () => {
+    const res = await fetch(`${baseUrl}/api/node?project=${name}&path=design.pen&id=rootF`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { node: Record<string, unknown>; childrenCount: number };
+    expect(body.node['children']).toBeUndefined();
+    expect(body.childrenCount).toBe(4);
+  });
+
   it('节点不存在 → 404（不猜、不回落到第一个）', async () => {
     const res = await fetch(`${baseUrl}/api/node?project=${name}&path=design.pen&id=nope`);
     expect(res.status).toBe(404);

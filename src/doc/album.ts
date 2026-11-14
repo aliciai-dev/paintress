@@ -1,5 +1,6 @@
-import { loadDoc, saveDoc } from './io.js';
-import { findProjectRoot, listPresets, PRESET_FILE, readPresetFile, setPreset, setPresetGroup } from './project.js';
+import { loadDoc, saveDoc, FileChangedError } from './io.js';
+import { statSync } from 'node:fs';
+import { findProjectRoot, listPresetGroups, listPresets, PRESET_FILE, readPresetFile, setPreset, setPresetGroup } from './project.js';
 import { presetGroupsOf, type PresetGroup } from './presets.js';
 import type { PenDocument } from '../schema/index.js';
 
@@ -12,6 +13,12 @@ import type { PenDocument } from '../schema/index.js';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** 一次性设计的逃生舱：建立候选与改写都跳过，但继续检查后代 */
+function allowsLiteral(node: Record<string, unknown>): boolean {
+  const meta = node['metadata'];
+  return isRecord(meta) && (meta['allowLiteral'] === true || meta['allowLiteral'] === 'true');
 }
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -49,12 +56,14 @@ export interface EstablishPlan {
   groups: CandidateGroup[];
 }
 
-/** 建议的 token key：由值推导，可重复运行（同样的值只会有一个 key） */
+/** 建议的 token key：由值推导，可重复运行；必须符合 VARIABLE_NAME（不允许小数点等字符） */
 export function suggestTokenKey(type: string, value: string): string {
-  if (type === 'color') return `color-${value.replace('#', '').toLowerCase()}`;
-  if (type === 'radius') return `radius-${value}`;
-  if (type === 'spacing') return `spacing-${value}`;
-  return `font-${value}`;
+  const raw = type === 'color' ? value.replace(/^#/, '') : value;
+  const safe = raw.replace(/[^A-Za-z0-9_-]+/g, '-');
+  if (type === 'color') return `color-${safe.toLowerCase()}`;
+  if (type === 'radius') return `radius-${safe}`;
+  if (type === 'spacing') return `spacing-${safe}`;
+  return `font-${safe}`;
 }
 
 /**
@@ -67,14 +76,16 @@ export function planEstablish(doc: PenDocument, opts: { minUses?: number } = {})
   const numUses = new Map<string, { kind: 'radius' | 'spacing' | 'font'; value: string; uses: LiteralUse[] }>();
   const signatures = new Map<string, { target: string; props: Record<string, string>; ids: string[] }>();
 
-  const walk = (nodes: unknown[]): void => {
+  const walk = (nodes: unknown[], inheritedAllowLiteral = false): void => {
     for (const raw of nodes) {
       if (!isRecord(raw)) continue;
       const node = raw;
+      const allowLiteral = inheritedAllowLiteral || allowsLiteral(node);
       const id = typeof node['id'] === 'string' ? node['id'] : '?';
       const type = typeof node['type'] === 'string' ? node['type'] : '?';
 
-      for (const prop of COLOR_PROPS) {
+      if (!allowLiteral) {
+        for (const prop of COLOR_PROPS) {
         const v = node[prop];
         if (typeof v === 'string' && HEX_RE.test(v)) {
           const list = colorUses.get(v.toUpperCase()) ?? [];
@@ -105,9 +116,10 @@ export function planEstablish(doc: PenDocument, opts: { minUses?: number } = {})
         hit.ids.push(id);
         signatures.set(sig, hit);
       }
+      }
 
       const kids = node['children'];
-      if (Array.isArray(kids)) walk(kids);
+      if (Array.isArray(kids)) walk(kids, allowLiteral);
     }
   };
   walk(doc.children);
@@ -138,7 +150,9 @@ export function planEstablish(doc: PenDocument, opts: { minUses?: number } = {})
     let complete = true;
     for (const [prop, value] of Object.entries(hit.props)) {
       const isColor = HEX_RE.test(value);
-      const key = isColor ? tokenByValue.get(`color:${value}`) : tokenByValue.get(`radius:${value}`) ?? tokenByValue.get(`spacing:${value}`);
+      const kind = isColor ? 'color' : prop === 'cornerRadius' ? 'radius' : 'spacing';
+      // gap 与 cornerRadius 可以是同一个数字，但语义不同，不能按「先找到哪个算哪个」
+      const key = tokenByValue.get(`${kind}:${value}`);
       if (key === undefined) {
         complete = false;
         break;
@@ -163,11 +177,41 @@ export interface EstablishResult {
   written: { tokens: string[]; groups: string[]; nodes: number };
 }
 
-/** 应用提取结果：写 token / preset 组，并把命中的节点改写成引用（一次写入，mtime 防覆盖） */
-export function applyEstablish(designPath: string, plan: EstablishPlan): EstablishResult {
+/**
+ * 应用提取结果：写 token / preset 组，并把命中的节点改写成引用。
+ * 传 expectedMtimeMs 时，**先**检查设计稿再写预设，避免计划过期后留下半套变更。
+ */
+export function applyEstablish(
+  designPath: string,
+  plan: EstablishPlan,
+  opts: { expectedMtimeMs?: number } = {},
+): EstablishResult {
+  if (opts.expectedMtimeMs !== undefined && statSync(designPath).mtimeMs !== opts.expectedMtimeMs) {
+    throw new FileChangedError(designPath);
+  }
   const root = findProjectRoot(designPath) ?? null;
   if (root === null) throw new Error('设计稿不在项目里（找不到 __preset.ptr），先注册项目或建预设文件');
   const presetPath = `${root}/${PRESET_FILE}`;
+
+  // 候选名来自值/类型，可能撞上项目里已经被手改过的同名定义。
+  // 覆盖它会改变现有节点的观感，所以必须在任何写入之前报冲突，而不是静默替换。
+  const existingTokens = new Map(listPresets(presetPath).items.map((item) => [item.key, item]));
+  for (const token of plan.tokens) {
+    const existing = existingTokens.get(token.key);
+    if (existing !== undefined && (existing.type !== token.type || existing.value !== token.value)) {
+      throw new Error(`token "${token.key}" 已存在且定义不同，拒绝覆盖（现有 ${existing.value}，候选 ${token.value}）`);
+    }
+  }
+  const existingGroups = listPresetGroups(presetPath).groups;
+  for (const group of plan.groups) {
+    const existing = existingGroups[group.name];
+    if (
+      existing !== undefined &&
+      (existing.target !== group.target || JSON.stringify(existing.props) !== JSON.stringify(group.props))
+    ) {
+      throw new Error(`preset 组 "${group.name}" 已存在且定义不同，拒绝覆盖；请先调整候选组名`);
+    }
+  }
 
   const writtenTokens: string[] = [];
   for (const t of plan.tokens) {
@@ -187,10 +231,15 @@ export function applyEstablish(designPath: string, plan: EstablishPlan): Establi
   for (const t of plan.tokens) tokenByValue.set(`${t.type}:${t.value.toUpperCase()}`, t.key);
 
   let updated = 0;
-  const rewrite = (nodes: unknown[]): void => {
+  const rewrite = (nodes: unknown[], inheritedAllowLiteral = false): void => {
     for (const raw of nodes) {
       if (!isRecord(raw)) continue;
       const node = raw;
+      if (inheritedAllowLiteral || allowsLiteral(node)) {
+        const kids = node['children'];
+        if (Array.isArray(kids)) rewrite(kids, true);
+        continue;
+      }
       const id = typeof node['id'] === 'string' ? node['id'] : '';
       const group = groupByNode.get(id);
       if (group !== undefined && node['preset'] === undefined) {
@@ -198,24 +247,25 @@ export function applyEstablish(designPath: string, plan: EstablishPlan): Establi
         node['preset'] = group.name;
         updated += 1;
       } else {
-        // 没有命中组：把命中的字面量换成 $token，行为不变、引用链建立
+        // 没有命中组：只改写 planEstablish 声明过的样式属性。
+        // 不能遍历全部字段——width:8、content:'#3B82F6' 都不是圆角/颜色 token 的用途。
         let touched = false;
-        for (const [prop, value] of Object.entries(node)) {
-          if (typeof value === 'string' && HEX_RE.test(value)) {
-            const key = tokenByValue.get(`color:${value.toUpperCase()}`);
-            if (key !== undefined) {
-              node[prop] = `$${key}`;
-              touched = true;
-            }
-          } else if (typeof value === 'number') {
-            for (const kind of ['radius', 'spacing', 'font'] as const) {
-              const key = tokenByValue.get(`${kind}:${String(value)}`);
-              if (key !== undefined) {
-                node[prop] = `$${key}`;
-                touched = true;
-                break;
-              }
-            }
+        for (const prop of COLOR_PROPS) {
+          const value = node[prop];
+          if (typeof value !== 'string' || !HEX_RE.test(value)) continue;
+          const key = tokenByValue.get(`color:${value.toUpperCase()}`);
+          if (key !== undefined) {
+            node[prop] = `$${key}`;
+            touched = true;
+          }
+        }
+        for (const { prop, kind } of NUM_PROPS) {
+          const value = node[prop];
+          if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+          const key = tokenByValue.get(`${kind}:${String(value)}`);
+          if (key !== undefined) {
+            node[prop] = `$${key}`;
+            touched = true;
           }
         }
         if (touched) updated += 1;
@@ -251,6 +301,8 @@ export interface AdjustRequest {
 export interface AdjustPlan {
   kind: 'token' | 'group';
   target: string;
+  /** 改组属性时必须独立于 changes 保存：未被引用的组 changes 为空也要能 apply */
+  prop?: string;
   value: string;
   changes: AdjustChange[];
 }
@@ -287,8 +339,23 @@ export function planAdjust(
       for (const raw of nodes) {
         if (!isRecord(raw)) continue;
         const id = typeof raw['id'] === 'string' ? raw['id'] : '?';
+        // 引用可能在 fill[0].color、effect[1].color、descendants.<path>.fill 等嵌套位置；
+        // 只比较顶层字段会把最常见的结构化填充全部漏掉。
+        const scan = (value: unknown, propPath: string): void => {
+          if (value === ref) {
+            changes.push({ where: id, prop: propPath, before, after: req.value });
+            return;
+          }
+          if (Array.isArray(value)) {
+            value.forEach((entry, index) => scan(entry, `${propPath}[${index}]`));
+            return;
+          }
+          if (isRecord(value)) {
+            for (const [key, entry] of Object.entries(value)) scan(entry, `${propPath}.${key}`);
+          }
+        };
         for (const [prop, value] of Object.entries(raw)) {
-          if (value === ref) changes.push({ where: id, prop, before, after: req.value });
+          if (prop !== 'children') scan(value, prop);
         }
         const kids = raw['children'];
         if (Array.isArray(kids)) walk(kids);
@@ -306,19 +373,23 @@ export function planAdjust(
   if (req.group !== undefined && req.group !== '' && req.prop !== undefined && req.prop !== '') {
     const group = groups[req.group];
     if (group === undefined) throw new Error(`preset 组不存在：${req.group}`);
-    const beforeRef = group.props[req.prop] ?? '';
+    const groupProp = req.prop;
+    const beforeRef = group.props[groupProp] ?? '';
     const before = beforeRef.startsWith('$') ? (vars[beforeRef.slice(1)] ?? beforeRef) : beforeRef;
     const walk = (nodes: unknown[]): void => {
       for (const raw of nodes) {
         if (!isRecord(raw)) continue;
         const id = typeof raw['id'] === 'string' ? raw['id'] : '?';
-        if (raw['preset'] === req.group) changes.push({ where: id, prop: req.prop as string, before, after: req.value });
+        if (raw['preset'] === req.group && raw[groupProp] === undefined) {
+          // 节点自己的同名显式属性优先于 preset，改组值不会影响它
+          changes.push({ where: id, prop: groupProp, before, after: req.value });
+        }
         const kids = raw['children'];
         if (Array.isArray(kids)) walk(kids);
       }
     };
     walk(doc.children);
-    return { kind: 'group', target: req.group, value: req.value, changes };
+    return { kind: 'group', target: req.group, prop: groupProp, value: req.value, changes };
   }
 
   throw new Error('adjust 需要 key（改 token）或 group + prop（改 preset 组属性）');
@@ -341,7 +412,8 @@ export function applyAdjust(designPath: string, presetDoc: PenDocument | null, p
   const groups = presetGroupsOf(presetDoc);
   const group = groups[plan.target];
   if (group === undefined) throw new Error(`preset 组不存在：${plan.target}`);
-  const prop = plan.changes[0]?.prop ?? '';
+  const prop = plan.prop;
+  if (prop === undefined || prop === '') throw new Error(`adjust 计划缺少组属性名：${plan.target}`);
   const nextProps = { ...group.props, [prop]: plan.value };
   const presetPath = `${findProjectRoot(designPath) ?? '.'}/${PRESET_FILE}`;
   setPresetGroup(presetPath, { name: plan.target, target: group.target, props: nextProps });

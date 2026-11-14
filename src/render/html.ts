@@ -374,6 +374,14 @@ function renderNode(
     case 'ellipse': {
       if (svgShape !== null) {
         inner = svgShapeHtml(svgShape);
+        if (scoped.resolveNum(node['sweepAngle'] as number | string) === 0) {
+          warnings.push(`${label}: sweepAngle=0，空弧不绘制`);
+        }
+        const alignment = node['strokeAlignment'];
+        if (svgShape.stroke !== null && (alignment === 'inner' || alignment === 'outer')) {
+          // SVG 原生描边居中；不明确说明就会把 inner/outer 的位置悄悄画错
+          warnings.push(`${label}: strokeAlignment=${alignment} 在 SVG 形状上暂按 center 渲染`);
+        }
         break;
       }
       if (plan !== null && 'reason' in plan) warnings.push(`${label}: ${plan.reason}`);
@@ -383,6 +391,10 @@ function renderNode(
     case 'polygon': {
       if (svgShape !== null) {
         inner = svgShapeHtml(svgShape);
+        const alignment = node['strokeAlignment'];
+        if (svgShape.stroke !== null && (alignment === 'inner' || alignment === 'outer')) {
+          warnings.push(`${label}: strokeAlignment=${alignment} 在 SVG 形状上暂按 center 渲染`);
+        }
         break;
       }
       const count = scoped.resolveNum(node['polygonCount'] as number | string);

@@ -695,7 +695,14 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             return;
           }
           entry.lastAccess = Date.now();
-          sendJson(200, { ok: true, node, vars: panelVars(abs) });
+          // 面板只展示节点自身属性；children 会让「选中画板」变成整份文档传输
+          const { children, ...fields } = node;
+          sendJson(200, {
+            ok: true,
+            node: fields,
+            childrenCount: Array.isArray(children) ? children.length : 0,
+            vars: panelVars(abs),
+          });
           return;
         }
         if (segments[1] === 'marks') {

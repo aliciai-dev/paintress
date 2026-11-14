@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { isDirectExecution, parseArgv, main } from '../src/cli.js';
+import { findBrowser } from '../src/shot/screenshot.js';
 
 describe('版本输出', () => {
   it('--version / -v / version 都打印包版本', async () => {
@@ -41,6 +42,14 @@ describe('parseArgv', () => {
       cmd: 'install',
       positionals: ['pi'],
       flags: { 'dry-run': true },
+    });
+  });
+
+  it('apply 是布尔标志，不吞后面的设计稿路径', () => {
+    expect(parseArgv(['establish', '--apply', 'a.ptr'])).toEqual({
+      cmd: 'establish',
+      positionals: ['a.ptr'],
+      flags: { apply: true },
     });
   });
 
@@ -108,6 +117,13 @@ describe('main 冒烟（临时副本）', () => {
     expect(await main(['bogus-cmd', file])).toBe(2);
     expect(await main([])).toBe(2);
   });
+
+  (findBrowser() !== null ? it : it.skip)('shot --scale 接受小数倍率', async () => {
+    const out = join(tmp, 'fractional.png');
+    expect(await main(['shot', file, out, '--scale', '0.5'])).toBe(0);
+    const printed = log.mock.calls.at(-1)?.[0] as string;
+    expect(JSON.parse(printed)['scale']).toBe(0.5);
+  }, 60_000);
 
   it('shot --board 缺值时明确报错，不静默截整张画布', async () => {
     const code = await main(['shot', file, join(tmp, 'missing-board.png'), '--board']);

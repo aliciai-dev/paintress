@@ -11,8 +11,6 @@ import type { VarResolver } from './vars.js';
  * 而 SVG 的 y 轴向下、sweep-flag=1 是顺时针，所以正向扇形的 flag 是 0。
  */
 
-const TAU = Math.PI * 2;
-
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -74,7 +72,8 @@ export function ellipsePath(input: EllipseGeometryInput): string {
   const sweep = Math.max(-360, Math.min(360, sweepRaw));
   const inner = Math.max(0, Math.min(1, input.innerRadius ?? 0));
 
-  const full = Math.abs(sweep) >= 360 || sweep === 0;
+  const full = Math.abs(sweep) >= 360;
+  if (sweep === 0) return ''; // 规格：空弧不绘制；不能落回整圆
   if (full) {
     const rix = rx * inner;
     const riy = ry * inner;
@@ -151,8 +150,6 @@ export function polygonPath(input: PolygonGeometryInput): string {
   if (r <= 0) {
     return `M ${pts.map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' L ')} Z`;
   }
-  const halfAngle = ((Math.PI * (n - 2)) / n) / 2; // 正多边形内角的一半
-  const dWant = r / Math.tan(halfAngle);
   const parts: string[] = [];
   for (let i = 0; i < n; i++) {
     const prev = pts[(i - 1 + n) % n] as Point;
@@ -162,6 +159,11 @@ export function polygonPath(input: PolygonGeometryInput): string {
     const v1 = { x: next.x - cur.x, y: next.y - cur.y };
     const len0 = Math.hypot(v0.x, v0.y) || 1;
     const len1 = Math.hypot(v1.x, v1.y) || 1;
+    // 非正方的多边形不是正多边形：每个顶点的真实内角都可能不同，
+    // 不能统一套 n 边形的内角，否则同一个 cornerRadius 会画出不同的实际圆角。
+    const cos = Math.max(-1, Math.min(1, (v0.x * v1.x + v0.y * v1.y) / (len0 * len1)));
+    const interior = Math.acos(cos);
+    const dWant = interior > 1e-6 ? r / Math.tan(interior / 2) : Number.POSITIVE_INFINITY;
     const d = Math.min(dWant, len0 * 0.45, len1 * 0.45);
     const a = { x: cur.x + (v0.x / len0) * d, y: cur.y + (v0.y / len0) * d };
     const b = { x: cur.x + (v1.x / len1) * d, y: cur.y + (v1.y / len1) * d };

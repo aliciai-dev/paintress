@@ -39,6 +39,10 @@ describe('椭圆几何（纯函数）', () => {
     expect(d).toContain('A 50 50 0 0 1 50 100');
   });
 
+  it('sweepAngle=0 是空弧，不返回任何路径', () => {
+    expect(ellipsePath({ width: 100, height: 100, sweepAngle: 0 })).toBe('');
+  });
+
   it('圆环：外圈 + 内圈两条子路径', () => {
     const d = ellipsePath({ width: 100, height: 100, innerRadius: 0.5 });
     expect(d.match(/M /g)?.length).toBe(2);
@@ -53,6 +57,13 @@ describe('多边形几何（纯函数）', () => {
     expect(pts[0]?.y).toBeCloseTo(0);
     expect(pts[1]?.x).toBeCloseTo(100);
     expect(pts[1]?.y).toBeCloseTo(50);
+  });
+
+  it('非正方多边形按每个顶点的真实内角退让', () => {
+    const d = polygonPath({ width: 200, height: 100, count: 4, cornerRadius: 10 });
+    // 顶角内角 126.87° → d=5；侧角内角 53.13° → d=20
+    expect(d).toContain('M 95.528 2.236');
+    expect(d).toContain('L 182.111 41.056');
   });
 
   it('圆角不小于 0 时用二次贝塞尔过渡，尖角时就是直线', () => {
@@ -90,6 +101,15 @@ describe('渲染：C1 弧形 / 圆环', () => {
     expect(html).toContain('stroke="#908030"');
     expect(html).toContain('stroke-width="2"');
     expect(warnings).toEqual([]);
+  });
+
+  it('sweepAngle=0 不画形状，并明确警告空弧', () => {
+    const { html, warnings } = render([
+      { type: 'ellipse', id: 'empty', width: 100, height: 100, sweepAngle: 0, fill: '#FF0000' },
+    ]);
+    expect(html).toContain('d=""');
+    expect(html).not.toContain('border-radius:50%');
+    expect(warnings.join('\n')).toContain('空弧不绘制');
   });
 
   it('整圆实心仍走 div（回归保护）', () => {

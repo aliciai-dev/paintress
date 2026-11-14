@@ -18,10 +18,10 @@ The agent does the reading and writing, through MCP tools or the CLI. The browse
 
 | Part | Purpose |
 | --- | --- |
-| MCP tools | ensure the viewer, create, query, read, update, insert, delete, move, batch, validate, render, screenshot |
+| MCP tools | ensure the viewer, create, query, read, update, insert, delete, move, batch, validate, render, screenshot, audit / establish / adjust the design system |
 | CLI | the same operations plus the viewer process, for use without an agent |
 | Viewer | local web server: renders a document, highlights changes, hands back clicked nodes as `#1`, `#2`, … |
-| Screenshot | PNG of a whole canvas, for agents that can look at images |
+| Screenshot | PNG of a canvas or one board; scale 0.2–2 (default 0.8), either edge capped to 8192px |
 
 ## Requirements
 
@@ -59,10 +59,13 @@ paintress delete <file> <id>                            remove a node
 paintress move <file> <id> <parent> [--index n]         reparent a node
 paintress batch <file> '<ops-json>'                     several operations at once
 paintress validate <file>                               check against the format spec
-paintress preset list|set|remove ...                    project presets (colors / radii)
+paintress preset list|set|remove|set-group|remove-group ... project tokens and preset groups
+paintress audit <file>                               read-only design-system audit
+paintress establish <file> [--apply]                propose tokens / preset groups (dry-run by default)
+paintress adjust <file> --key k --value v [--apply] preview or apply a design-system adjustment
 paintress component list|insert ...                     project component library
 paintress render <file> <out.html>                      write the canvas as HTML
-paintress shot <file> <out.png> [--scale n] [--board id|name]  render to PNG (one board or the whole canvas)
+paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  render to PNG (default 0.8)
 
 paintress web [--port n] [--idle ms] [--foreground]   ensure the viewer is running (idempotent, returns at once)
 paintress ping | status | stop                          viewer control
@@ -88,9 +91,9 @@ Agents get the same guarantee from the MCP side: `paintress_viewer` ensures the 
 
 A design file that has a sibling Markdown file of the same name (`home.ptr` → `home.md`) gets a notes button in the top-left corner of the canvas. Click it and the canvas narrows to make room for the note, read-only: what the design is for, what is still open, which requirement it answers.
 
-The rail in the top-right corner holds the project's design system. **Presets** are the project's colors and corner radii: the agent references them (`$color-brand`) instead of pasting values, and you can change one here and watch the canvas update — no more "a bit bluer". **Components** is a read-only gallery of everything reusable the agent has built so far, so you can see progress and the agent can look before rebuilding something that already exists.
+The rail in the top-right corner holds the project's design system. **Presets** are the project's colors, corner radii, spacing and font values: the agent references them (`$color-brand`) instead of pasting values, and you can change one here and watch the canvas update — no more "a bit bluer". Nodes can also reference a whole preset group; groups are shown read-only in the panel. **Components** is a read-only gallery of everything reusable the agent has built so far, so you can see progress and the agent can look before rebuilding something that already exists.
 
-Canvas navigation: wheel zooms at the pointer, space / middle button / empty area drags to pan, `Ctrl/Cmd+0` returns to 100%, `Shift+1` fits the window. Files with more than one board get a board strip. Edits made through the CLI or MCP are highlighted in the viewer, and clicks assign short ids that the agent can read back with `paintress_marks`.
+Canvas navigation: wheel zooms at the pointer, space / middle button / empty area drags to pan, `Ctrl/Cmd+0` returns to 100%, `Shift+1` fits the window, and `Ctrl/Cmd+K` quickly switches design files. Selecting a node opens a read-only inspector. Files with more than one board get a board strip; the active board can be exported as PNG at 0.5x / 1x / 2x (1x means its design pixels). Edits made through the CLI or MCP are highlighted in the viewer, and clicks assign short ids that the agent can read back with `paintress_marks`.
 
 Projects are named after their directory path (`c-thun/raybend`), so the URL reads like the path: `http://localhost:3316/c-thun/raybend?file=design/editor.pen`. Project rows have an **×** on hover that unbinds the project (design files are untouched; an agent re-registers on its next start), and **Stop server** in the sidebar footer shuts the viewer process down — both ask for confirmation first.
 

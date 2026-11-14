@@ -52,9 +52,11 @@ export interface BindOptions {
    * direction: 1 = 上一层，-1 = 下一层。
    */
   onLevelStep?: (direction: 1 | -1, point: { x: number; y: number }) => void;
+  /** Ctrl/Cmd+K：焦点在 iframe 里时也要能打开多稿切换（键盘事件不跨 document） */
+  onQuickSwitch?: () => void;
 }
 
-export function bindViewport({ doc, onChange, onLevelStep }: BindOptions): ViewportBinding | null {
+export function bindViewport({ doc, onChange, onLevelStep, onQuickSwitch }: BindOptions): ViewportBinding | null {
   const found = doc.querySelector<HTMLElement>('.ptr-canvas');
   if (found === null) return null;
   // 显式标注为非空：闭包里不再享受控制流收窄
@@ -168,6 +170,11 @@ export function bindViewport({ doc, onChange, onLevelStep }: BindOptions): Viewp
   }
 
   function onKeyDown(ev: KeyboardEvent): void {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k' && onQuickSwitch !== undefined) {
+      ev.preventDefault();
+      onQuickSwitch();
+      return;
+    }
     if (ev.key === ' ' && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
       const target = ev.target as HTMLElement | null;
       const tag = target?.tagName ?? '';

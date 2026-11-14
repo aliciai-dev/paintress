@@ -37,8 +37,16 @@ export interface AuditReport {
   summary: string;
 }
 
-/** 参与「裸值 → token」建议的属性；宽高这类几何值不在此列（token 化收益低、噪音大） */
-const LITERAL_PROPS = new Set(['cornerRadius', 'gap', 'fontSize', 'strokeWidth', 'opacity']);
+/** 参与「裸值 → token」建议的样式属性；宽高、透明度、文本内容都不在此列 */
+const NUMERIC_PROP_KIND: Record<string, 'radius' | 'spacing' | 'font'> = {
+  cornerRadius: 'radius',
+  gap: 'spacing',
+  padding: 'spacing',
+  strokeWidth: 'spacing',
+  fontSize: 'font',
+};
+const COLOR_STYLE_PROPS = new Set(['fill', 'stroke', 'color', 'effect']);
+const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -74,8 +82,13 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
   const colorTokens = new Map<string, string>();
   const numberTokens = new Map<string, string>();
   for (const t of input.tokens) {
-    if (t.type === 'color') colorTokens.set(t.value.toUpperCase(), t.key);
-    else if (t.type === 'radius' || t.type === 'spacing') numberTokens.set(String(Number(t.value)), t.key);
+    if (t.type === 'color') {
+      colorTokens.set(t.value.toUpperCase(), t.key);
+    } else if (t.type === 'radius' || t.type === 'spacing' || t.type === 'font') {
+      const n = Number(t.value);
+      // key 带上 kind：gap 不能建议成 $radius，fontSize 也不能建议成间距
+      if (Number.isFinite(n)) numberTokens.set(`${t.type}:${n}`, t.key);
+    }
   }
 
   const usedVars = new Set<string>();
@@ -107,28 +120,47 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
         }
       }
 
-      // 裸值 → token 建议
+      // 裸值 → token 建议。颜色只在样式字段里递归（结构化 fill / stroke / shadow），
+      // 不扫 name/content/id；数值则按属性对应的 kind 匹配，数组与逐边对象也覆盖。
       if (!allowLiteral) {
-        for (const [prop, value] of Object.entries(node)) {
-          if (prop === 'children' || typeof value === 'string' && value.startsWith('$')) continue;
+        const suggestColor = (value: unknown, path: string): void => {
           if (typeof value === 'string') {
+            if (!HEX_RE.test(value)) return;
             const hit = colorTokens.get(value.toUpperCase());
-            if (hit !== undefined && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)) {
-              findings.push({
-                kind: 'literal',
-                where: id,
-                message: `${prop} 写了裸色值 ${value}`,
-                suggestion: `$${hit}`,
-              });
-            }
-            continue;
-          }
-          if (typeof value === 'number' && LITERAL_PROPS.has(prop)) {
-            const hit = numberTokens.get(String(value));
             if (hit !== undefined) {
-              findings.push({ kind: 'literal', where: id, message: `${prop} 写了裸值 ${value}`, suggestion: `$${hit}` });
+              findings.push({ kind: 'literal', where: id, message: `${path} 写了裸色值 ${value}`, suggestion: `$${hit}` });
             }
+            return;
           }
+          if (Array.isArray(value)) {
+            value.forEach((entry, index) => suggestColor(entry, `${path}[${index}]`));
+            return;
+          }
+          if (isRecord(value)) {
+            for (const [key, entry] of Object.entries(value)) suggestColor(entry, `${path}.${key}`);
+          }
+        };
+        const suggestNumber = (value: unknown, path: string, kind: 'radius' | 'spacing' | 'font'): void => {
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            const hit = numberTokens.get(`${kind}:${value}`);
+            if (hit !== undefined) {
+              findings.push({ kind: 'literal', where: id, message: `${path} 写了裸值 ${value}`, suggestion: `$${hit}` });
+            }
+            return;
+          }
+          if (Array.isArray(value)) {
+            value.forEach((entry, index) => suggestNumber(entry, `${path}[${index}]`, kind));
+            return;
+          }
+          if (isRecord(value)) {
+            for (const [key, entry] of Object.entries(value)) suggestNumber(entry, `${path}.${key}`, kind);
+          }
+        };
+        for (const [prop, value] of Object.entries(node)) {
+          if (prop === 'children') continue;
+          if (COLOR_STYLE_PROPS.has(prop)) suggestColor(value, prop);
+          const kind = NUMERIC_PROP_KIND[prop];
+          if (kind !== undefined) suggestNumber(value, prop, kind);
         }
       }
 

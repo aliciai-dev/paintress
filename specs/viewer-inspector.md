@@ -10,7 +10,7 @@
 ## 方案
 
 - **数据来源**：新接口 `GET /api/node?project=<name>&path=<rel>&id=<nodeId>`
-  → `{ ok, node, presets: { <key>: value } }`。`node` 是磁盘上的原始节点（`ref` 不展开，保留 `ref/descendants` 原貌，属性面板要显示「它就是引用」）；
+  → `{ ok, node, presets: { <key>: value } }`。`node` 是磁盘上节点自身的字段（**不含 `children`**，另给 `childrenCount`，避免选中画板时回传整份稿）；`ref` 不展开，保留 `ref/descendants` 原貌，属性面板要显示「它就是引用」；
   `presets` 是项目预设变量表，用来把 `$color-brand` 同时显示成「引用 + 解析值」。
 - **取数时机**：选中变化时一次请求；同一次选中不轮询。SSE `change` 且面板开着 → 重取一次（文件被 agent 改了要跟上）。
 - **界面**：复用 `ui/src/panel.tsx` 的 `Panel` 浮动壳，挂在画布右侧（与预设/组件面板同一位置、互斥）；

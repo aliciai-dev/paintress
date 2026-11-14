@@ -485,7 +485,7 @@ export const TOOLS: Record<string, ToolDef> = {
       const minUses = typeof a['minUses'] === 'number' ? (a['minUses'] as number) : undefined;
       const plan = planEstablish(loaded.doc, { ...(minUses !== undefined ? { minUses } : {}) });
       if (a['apply'] !== true) return { ok: true, applied: false, ...plan };
-      return { ok: true, ...applyEstablish(path, plan) };
+      return { ok: true, ...applyEstablish(path, plan, { expectedMtimeMs: loaded.mtimeMs }) };
     },
   },
 
@@ -508,6 +508,12 @@ export const TOOLS: Record<string, ToolDef> = {
       const key = optStr(a, 'key');
       const group = optStr(a, 'group');
       const prop = optStr(a, 'prop');
+      if (key !== undefined && (group !== undefined || prop !== undefined)) {
+        throw new Error('key 与 group/prop 是两种调整方式，只能选一种');
+      }
+      if ((group === undefined) !== (prop === undefined)) {
+        throw new Error('改 preset 组必须同时提供 group 与 prop');
+      }
       const plan = planAdjust(loaded.doc, presetDoc, {
         ...(key !== undefined ? { key } : {}),
         ...(group !== undefined ? { group } : {}),
