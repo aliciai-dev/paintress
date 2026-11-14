@@ -1,5 +1,6 @@
 import type { PenDocument } from '../schema/index.js';
 import { PROP_TOKEN_KIND, presetGroupsOf, type PresetGroup } from './presets.js';
+import { fontRegistryOf, isGenericFamily, splitFontStack, type FontRegistry } from './fonts.js';
 
 /**
  * 画谱审计（B3）：找出「本该用 token / preset，却写了裸值」的地方，以及
@@ -8,7 +9,15 @@ import { PROP_TOKEN_KIND, presetGroupsOf, type PresetGroup } from './presets.js'
  * 纯函数：只读文档与项目预设，不写盘、不改树。是否替换由 agent / 人决定。
  */
 
-export type AuditKind = 'literal' | 'orphan-token' | 'unused-preset' | 'dangling-preset' | 'preset-target' | 'preset-literal';
+export type AuditKind =
+  | 'literal'
+  | 'orphan-token'
+  | 'unused-preset'
+  | 'dangling-preset'
+  | 'preset-target'
+  | 'preset-literal'
+  | 'font-missing'
+  | 'font-unregistered';
 
 export interface AuditFinding {
   kind: AuditKind;
@@ -28,6 +37,8 @@ export interface AuditToken {
 export interface AuditInput {
   tokens: AuditToken[];
   groups: Record<string, PresetGroup>;
+  /** 项目字体注册表：字体缺口与未登记 family 也进审计 */
+  fonts?: FontRegistry;
 }
 
 export interface AuditReport {
@@ -51,6 +62,8 @@ function countOf(findings: AuditFinding[]): Record<AuditKind, number> {
     'dangling-preset': 0,
     'preset-target': 0,
     'preset-literal': 0,
+    'font-missing': 0,
+    'font-unregistered': 0,
   };
   for (const f of findings) counts[f.kind] += 1;
   return counts;
@@ -64,6 +77,8 @@ function summarize(report: Omit<AuditReport, 'summary'>): string {
     `未使用的 preset 组 ${c['unused-preset']}`,
     `悬空 preset 引用 ${c['dangling-preset'] + c['preset-target']}`,
     `preset 里的裸值 ${c['preset-literal']}`,
+    `缺字体 ${c['font-missing']}`,
+    `未登记字体 ${c['font-unregistered']}`,
   ];
   return parts.join(' · ');
 }
@@ -94,6 +109,18 @@ export function auditDoc(doc: PenDocument, input: AuditInput): AuditReport {
       if (!isRecord(raw)) continue;
       const node = raw;
       const id = typeof node['id'] === 'string' ? node['id'] : '?';
+      if (node['type'] === 'text') {
+        const ff = node['fontFamily'];
+        if (typeof ff !== 'string' || ff.trim() === '') {
+          findings.push({ kind: 'font-missing', where: id, message: 'text 没有 fontFamily，正在用默认字体' });
+        } else if (!ff.startsWith('$') && input.fonts !== undefined) {
+          for (const family of splitFontStack(ff)) {
+            if (!isGenericFamily(family) && input.fonts.families[family] === undefined) {
+              findings.push({ kind: 'font-unregistered', where: id, message: `字体未登记：${family}` });
+            }
+          }
+        }
+      }
       const meta = node['metadata'];
       const allowLiteral =
         inheritedAllowLiteral || (isRecord(meta) && (meta['allowLiteral'] === true || meta['allowLiteral'] === 'true'));
@@ -219,5 +246,11 @@ export function auditInputFrom(
   tokens: AuditToken[],
   presetDoc: PenDocument | null,
 ): AuditInput {
-  return { tokens, groups: { ...presetGroupsOf(presetDoc), ...presetGroupsOf(doc) } };
+  const projectFonts = fontRegistryOf(presetDoc);
+  const ownFonts = fontRegistryOf(doc);
+  return {
+    tokens,
+    groups: { ...presetGroupsOf(presetDoc), ...presetGroupsOf(doc) },
+    fonts: { ...projectFonts, families: { ...projectFonts.families, ...ownFonts.families } },
+  };
 }

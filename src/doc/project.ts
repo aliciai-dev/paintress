@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc } from './io.js';
 import { PEN_DOC_VERSION, type PenDocument } from '../schema/index.js';
 import { PRESET_TYPES, presetGroupsOf, isNumericPresetValue, isPresetType, type PresetGroup, type PresetType } from './presets.js';
+import { fontRegistryOf, isFontSourceKind, type FontEntry, type FontRegistry } from './fonts.js';
 
 export { PRESET_TYPES, presetGroupsOf, isPresetType, type PresetGroup, type PresetType };
 
@@ -205,15 +206,6 @@ export function projectPresetNames(filePath: string): Set<string> {
   const p = presetPathFor(filePath);
   if (p === null) return new Set();
   return presetVarNames(readPresetFile(p)?.doc ?? null);
-}
-
-/** 项目预设里每个 token 的种类（引用的类型校验用）；没有文件就是空表 */
-export function projectPresetKinds(filePath: string): Record<string, PresetType> {
-  const p = presetPathFor(filePath);
-  if (p === null) return {};
-  const out: Record<string, PresetType> = {};
-  for (const item of readPresetFile(p)?.items ?? []) out[item.key] = item.type;
-  return out;
 }
 
 /** 预设文件对应的变量名集合（校验时用来区分「未定义」与「来自项目预设」） */
@@ -493,4 +485,235 @@ export function readTextIfExists(path: string, maxBytes = 512 * 1024): string | 
   if (!st.isFile()) return null;
   if (st.size > maxBytes) throw new Error(`文件过大（${st.size} 字节，上限 ${maxBytes}）：${path}`);
   return readFileSync(path, 'utf8');
+}
+
+// ---------------------------------------------------------------- 字体注册表
+
+export interface FontRegistryFile {
+  path: string | null;
+  registry: FontRegistry;
+}
+
+/** 项目字体注册表（`x-paintress.fonts`）；没有预设文件就是空表 */
+export function projectFontRegistry(from: string): FontRegistryFile {
+  const path = presetPathFor(from);
+  if (path === null) return { path: null, registry: { families: {} } };
+  return { path, registry: fontRegistryOf(readPresetFile(path)?.doc ?? null) };
+}
+
+/** 定位/初始化预设文件（写字体与 seed 共用） */
+function presetFileForWrite(from: string): { path: string; file: PresetFile | null } {
+  let path = presetPathFor(from);
+  if (path === null) {
+    const root = findProjectRoot(from) ?? projectDirOf(from);
+    ensureProjectScaffold(root);
+    path = join(root, PRESET_FILE);
+  }
+  return { path, file: readPresetFile(path) };
+}
+
+function writeFontRegistry(path: string, doc: PenDocument, mtimeMs: number | undefined, registry: FontRegistry): void {
+  const meta = (doc as Record<string, unknown>)['x-paintress'];
+  const metaObj = isRecord(meta) ? meta : {};
+  saveDoc(path, { ...doc, ['x-paintress']: { ...metaObj, spec: '1', fonts: registry } } as PenDocument, {
+    flavor: 'ptr',
+    ...(mtimeMs !== undefined ? { expectedMtimeMs: mtimeMs } : {}),
+  });
+}
+
+export interface FontEntryInput {
+  family: string;
+  source: { kind: string; target?: string };
+  preview?: string;
+  metrics?: FontEntry['metrics'];
+  note?: string;
+}
+
+/** 写一条字体登记；`system`/`bundle` 必须给 preview，`css`/`file` 的路径必须在项目内且存在 */
+export function setFontEntry(from: string, input: FontEntryInput): FontRegistry {
+  const family = input.family.trim();
+  if (family === '') throw new Error('字体 family 不能为空');
+  if (family.startsWith('$')) throw new Error('family 写真实字体名，不要写 $token');
+  if (!isFontSourceKind(input.source.kind)) throw new Error('source.kind 必须是 web / css / file / system / bundle');
+  const kind = input.source.kind;
+  const target = input.source.target?.trim();
+  if (kind !== 'system' && kind !== 'bundle' && (target === undefined || target === '')) {
+    throw new Error(`${kind} 来源必须给 target（web 写 CSS URL，css/file 写项目内相对路径）`);
+  }
+  if (kind === 'web' && !/^https?:\/\//i.test(target ?? '')) throw new Error('web 来源的 target 必须是 http(s) URL');
+  if (kind === 'css' || kind === 'file') {
+    const root = findProjectRoot(from) ?? projectDirOf(from);
+    const abs = resolve(root, target as string);
+    const rel = relative(root, abs);
+    if (rel.startsWith('..') || rel.includes(`..${sep}`)) throw new Error(`字体路径越出项目：${target}`);
+    if (!existsSync(abs)) throw new Error(`字体文件不存在：${target}（相对项目根 ${root}）`);
+  }
+  const preview = input.preview?.trim();
+  if ((kind === 'system' || kind === 'bundle') && (preview === undefined || preview === '')) {
+    throw new Error(`${kind} 来源必须给 preview（设计期替代字体）`);
+  }
+  const { path, file } = presetFileForWrite(from);
+  const registry = fontRegistryOf(file?.doc ?? null);
+  const entry: FontEntry = {
+    source: { kind, ...(target !== undefined && target !== '' ? { target } : {}) },
+    ...(preview !== undefined && preview !== '' ? { preview } : {}),
+    ...(input.metrics !== undefined ? { metrics: input.metrics } : {}),
+    ...(input.note !== undefined && input.note !== '' ? { note: input.note } : {}),
+  };
+  const next: FontRegistry = { ...registry, families: { ...registry.families, [family]: entry } };
+  writeFontRegistry(path, file?.doc ?? emptyDoc(), file?.mtimeMs, next);
+  return next;
+}
+
+/** 删一条字体登记（不动设计稿；引用它的节点会在 validate 出 warning） */
+export function removeFontEntry(from: string, family: string): FontRegistry {
+  const path = presetPathFor(from);
+  if (path === null) return { families: {} };
+  const file = readPresetFile(path);
+  if (file === null) return { families: {} };
+  const registry = fontRegistryOf(file.doc);
+  if (registry.families[family] === undefined) return registry;
+  const families = { ...registry.families };
+  delete families[family];
+  const next: FontRegistry = { ...registry, families };
+  writeFontRegistry(path, file.doc, file.mtimeMs, next);
+  return next;
+}
+
+/** 设项目默认字体（font token key 或 family） */
+export function setDefaultFont(from: string, value: string): FontRegistry {
+  const v = value.trim();
+  if (v === '') throw new Error('默认字体不能为空');
+  const { path, file } = presetFileForWrite(from);
+  const registry = fontRegistryOf(file?.doc ?? null);
+  const next: FontRegistry = { ...registry, default: v };
+  writeFontRegistry(path, file?.doc ?? emptyDoc(), file?.mtimeMs, next);
+  return next;
+}
+
+// ---------------------------------------------------------------- 预设种子
+
+export interface SeedPlan {
+  applied: boolean;
+  created: { tokens: string[]; groups: string[]; fonts: string[]; defaultFont: boolean };
+  skipped: { tokens: string[]; groups: string[]; fonts: string[]; defaultFont: boolean };
+}
+
+const SEED_TOKENS: { key: string; type: PresetType; value: string }[] = [
+  { key: 'color-text', type: 'color', value: '#111827' },
+  { key: 'color-text-muted', type: 'color', value: '#6B7280' },
+  { key: 'color-surface', type: 'color', value: '#FFFFFF' },
+  { key: 'color-surface-muted', type: 'color', value: '#F3F4F6' },
+  { key: 'color-border', type: 'color', value: '#E5E7EB' },
+  { key: 'color-brand', type: 'color', value: '#2563EB' },
+  { key: 'color-danger', type: 'color', value: '#DC2626' },
+  { key: 'color-success', type: 'color', value: '#059669' },
+  { key: 'radius-4', type: 'radius', value: '4' },
+  { key: 'radius-8', type: 'radius', value: '8' },
+  { key: 'radius-12', type: 'radius', value: '12' },
+  { key: 'radius-full', type: 'radius', value: '999' },
+  { key: 'spacing-4', type: 'spacing', value: '4' },
+  { key: 'spacing-8', type: 'spacing', value: '8' },
+  { key: 'spacing-12', type: 'spacing', value: '12' },
+  { key: 'spacing-16', type: 'spacing', value: '16' },
+  { key: 'spacing-24', type: 'spacing', value: '24' },
+  { key: 'spacing-32', type: 'spacing', value: '32' },
+  { key: 'spacing-48', type: 'spacing', value: '48' },
+  { key: 'fontSize-12', type: 'fontSize', value: '12' },
+  { key: 'fontSize-14', type: 'fontSize', value: '14' },
+  { key: 'fontSize-16', type: 'fontSize', value: '16' },
+  { key: 'fontSize-20', type: 'fontSize', value: '20' },
+  { key: 'fontSize-24', type: 'fontSize', value: '24' },
+  { key: 'fontSize-32', type: 'fontSize', value: '32' },
+  { key: 'font-sans', type: 'font', value: 'Inter Variable, Noto Sans SC Variable' },
+  { key: 'font-mono', type: 'font', value: 'ui-monospace, SFMono-Regular, monospace' },
+];
+
+const SEED_GROUPS: { name: string; target: string; props: Record<string, string> }[] = [
+  { name: 'text.body', target: 'text', props: { fontSize: '$fontSize-16', fill: '$color-text' } },
+  { name: 'text.muted', target: 'text', props: { fontSize: '$fontSize-14', fill: '$color-text-muted' } },
+  { name: 'text.title', target: 'text', props: { fontSize: '$fontSize-24', fill: '$color-text' } },
+  { name: 'button', target: 'frame', props: { fill: '$color-brand', cornerRadius: '$radius-8' } },
+  { name: 'card', target: 'frame', props: { fill: '$color-surface', cornerRadius: '$radius-12', stroke: '$color-border' } },
+  { name: 'input', target: 'frame', props: { fill: '$color-surface', cornerRadius: '$radius-8', stroke: '$color-border' } },
+];
+
+const SEED_FONTS: Record<string, FontEntry> = {
+  'Inter Variable': {
+    source: { kind: 'web', target: 'https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.3.0/wght.css' },
+    preview: 'system-ui',
+  },
+  'Noto Sans SC Variable': {
+    source: { kind: 'web', target: 'https://cdn.jsdelivr.net/npm/@fontsource-variable/noto-sans-sc@5.3.1/wght.css' },
+    preview: 'system-ui',
+  },
+};
+
+const SEED_DEFAULT_FONT = 'font-sans';
+
+/**
+ * 预设种子：一次给出颜色 / 倒角 / 间距 / 字号 / 字体 + 六个常用 preset 组。
+ * **只补缺失、永不覆盖**；默认 dry-run（`apply: true` 才落盘），只写一次文件。
+ */
+export function seedDesignSystem(from: string, opts: { apply?: boolean } = {}): SeedPlan {
+  const apply = opts.apply === true;
+  const found = presetPathFor(from);
+  const path = found ?? (apply ? presetFileForWrite(from).path : null);
+  const file = path === null ? null : readPresetFile(path);
+  const doc = file?.doc ?? emptyDoc();
+  const items = file?.items ?? [];
+  const groups = presetGroupsOf(doc);
+  const registry = fontRegistryOf(doc);
+
+  const existingTokens = new Set(items.map((item) => item.key));
+  const existingGroups = new Set(Object.keys(groups));
+  const existingFonts = new Set(Object.keys(registry.families));
+
+  const created = { tokens: [] as string[], groups: [] as string[], fonts: [] as string[], defaultFont: false };
+  const skipped = { tokens: [] as string[], groups: [] as string[], fonts: [] as string[], defaultFont: false };
+  for (const token of SEED_TOKENS) (existingTokens.has(token.key) ? skipped.tokens : created.tokens).push(token.key);
+  for (const group of SEED_GROUPS) (existingGroups.has(group.name) ? skipped.groups : created.groups).push(group.name);
+  for (const family of Object.keys(SEED_FONTS)) (existingFonts.has(family) ? skipped.fonts : created.fonts).push(family);
+  if (registry.default === undefined) created.defaultFont = true;
+  else skipped.defaultFont = true;
+
+  if (!apply || path === null) return { applied: false, created, skipped };
+
+  const variables = { ...(doc.variables ?? {}) };
+  const metaItems = { ...presetsMeta(doc).items };
+  for (const token of SEED_TOKENS) {
+    if (!created.tokens.includes(token.key)) continue;
+    variables[token.key] = { type: varTypeOf(token.type), value: normalizePresetValue(token.type, token.value) };
+    metaItems[token.key] = { type: token.type };
+  }
+  const nextGroups = { ...groups };
+  for (const group of SEED_GROUPS) {
+    if (created.groups.includes(group.name)) nextGroups[group.name] = { target: group.target, props: group.props };
+  }
+  const families = { ...registry.families };
+  for (const [family, entry] of Object.entries(SEED_FONTS)) {
+    if (created.fonts.includes(family)) families[family] = entry;
+  }
+  const nextRegistry: FontRegistry = {
+    ...registry,
+    families,
+    ...(created.defaultFont ? { default: SEED_DEFAULT_FONT } : {}),
+  };
+  const meta = (doc as Record<string, unknown>)['x-paintress'];
+  const metaObj = isRecord(meta) ? meta : {};
+  saveDoc(
+    path,
+    {
+      ...doc,
+      variables,
+      ['x-paintress']: {
+        ...metaObj,
+        spec: '1',
+        presets: { version: 1, items: metaItems, groups: nextGroups },
+        fonts: nextRegistry,
+      },
+    } as PenDocument,
+    { flavor: 'ptr', ...(file?.mtimeMs !== undefined ? { expectedMtimeMs: file.mtimeMs } : {}) },
+  );
+  return { applied: true, created, skipped };
 }

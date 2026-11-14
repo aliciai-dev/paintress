@@ -1,5 +1,6 @@
 import { DocumentSchema, KNOWN_NODE_TYPES, VARIABLE_NAME } from '../schema/index.js';
 import { PRESET_TYPE_LABEL, PROP_TOKEN_KIND, presetGroupsOf, type PresetGroup, type PresetType } from './presets.js';
+import { textFontGaps, type FontRegistry } from './fonts.js';
 import { collectIds } from './id.js';
 
 /** 校验结果：errors 阻断写入，warnings 不阻断 */
@@ -24,6 +25,8 @@ export interface ValidateOptions {
   presetGroups?: Record<string, PresetGroup>;
   /** 项目预设里每个 token 的种类：属性引用错类（`fill: $radius-8`）时给警告 */
   presetKinds?: Record<string, PresetType>;
+  /** 项目字体注册表：未登记 family / 系统字体无替代 / 文本没写字体 */
+  fontRegistry?: FontRegistry;
 }
 
 /** 一个属性值里出现的所有 `$token` 引用（结构化填充、数组、逐边对象都要覆盖） */
@@ -170,6 +173,36 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
   for (const name of varRefs) {
     if (!varNames.has(name)) {
       warnings.push({ level: 'warning', path: '<variables>', message: `字段引用了未定义的变量 $${name}` });
+    }
+  }
+
+  // 字体：缺字体信息、未登记 family、系统字体没有替代 —— 都是 warning，不阻断写入
+  if (opts.fontRegistry !== undefined) {
+    const gaps = textFontGaps(doc, opts.fontRegistry);
+    if (gaps.textNodes > 0) {
+      const sample = gaps.ids.length > 0 ? `（如 ${gaps.ids.join('、')}）` : '';
+      warnings.push({
+        level: 'warning',
+        path: '<fonts>',
+        message: `${gaps.textNodes} 个 text 节点没有 fontFamily，当前用默认字体 ${gaps.defaultStack}${sample}`,
+      });
+    }
+    for (const family of gaps.unregistered) {
+      warnings.push({ level: 'warning', path: '<fonts>', message: `字体未登记：${family}（paintress_font add）` });
+    }
+    for (const [family, entry] of Object.entries(opts.fontRegistry.families)) {
+      if ((entry.source.kind === 'system' || entry.source.kind === 'bundle') && entry.preview === undefined) {
+        warnings.push({
+          level: 'warning',
+          path: `<font:${family}>`,
+          message: `${family} 是 ${entry.source.kind} 来源，没有 preview：截图侧可能不可用`,
+        });
+      }
+    }
+    const def = opts.fontRegistry.default;
+    const known = new Set(opts.knownVars ?? []);
+    if (def !== undefined && opts.fontRegistry.families[def] === undefined && !known.has(def)) {
+      warnings.push({ level: 'warning', path: '<fonts>', message: `默认字体 ${def} 没有登记` });
     }
   }
 

@@ -41,6 +41,7 @@ import { VERSION } from './shared/version.js';
  *   paintress adjust <file> --key k --value v [--apply]  改 token；或 --group g --prop p
  *   paintress preset list [dir]                       项目预设列表
  *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius|spacing|fontSize|font）
+ *   paintress preset seed <dir> [--apply]             补齐整套尺度（默认 dry-run）
  *   paintress preset groups [dir]                     列出 preset 组（谱式）
  *   paintress preset set-group <dir> <组名> <target> '<props-json>'
  *   paintress preset remove-group <dir> <组名>
@@ -68,7 +69,7 @@ export interface ParsedCommand {
 
 const NO_OPEN_FLAG = 'no-open';
 
-const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', NO_OPEN_FLAG]);
+const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', 'preview', 'note', 'metrics', NO_OPEN_FLAG]);
 /** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
 const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', 'apply', NO_OPEN_FLAG]);
 
@@ -374,6 +375,12 @@ export async function main(argv: string[]): Promise<number> {
           ...(a1 !== undefined ? { path: a1 } : {}),
         })) as { path?: string | null; groups?: unknown };
         out = { ok: true, path: full.path ?? null, groups: full.groups ?? {} };
+      } else if (action === 'seed') {
+        out = await call('paintress_preset', {
+          action: 'seed',
+          ...(a1 !== undefined ? { path: a1 } : {}),
+          ...(flags['apply'] === true ? { apply: true } : {}),
+        });
       } else if (action === 'set-group') {
         if (!a1 || !a2 || !positionals[3] || !positionals[4]) {
           throw new Error("用法：paintress preset set-group <dir> <组名> <target> '<props-json>'");
@@ -423,7 +430,51 @@ export async function main(argv: string[]): Promise<number> {
           ...(flagNum(flags, 'index') !== undefined ? { index: flagNum(flags, 'index') } : {}),
         });
       } else {
-        throw new Error(`未知 component 动作：${action}（list / insert）`);
+        throw new Error(`未知 component 动作：${action}（list / insert / add）`);
+      }
+      console.log(JSON.stringify(out, null, 2));
+      return 0;
+    }
+
+    if (cmd === 'font') {
+      const action = file ?? 'list';
+      if (action === 'list') {
+        out = await call('paintress_font', { action: 'list', ...(a1 !== undefined ? { path: a1 } : {}) });
+      } else if (action === 'remove') {
+        if (!a1 || !a2) throw new Error('用法：paintress font remove <dir> <family>');
+        out = await call('paintress_font', { action: 'remove', path: a1, family: a2 });
+      } else if (action === 'default') {
+        if (!a1 || !a2) throw new Error('用法：paintress font default <dir> <token-or-family>');
+        out = await call('paintress_font', { action: 'default', path: a1, value: a2 });
+      } else if (action === 'add') {
+        if (!a1 || !a2 || !positionals[3]) {
+          throw new Error(
+            "用法：paintress font add <dir> <family> <web|css|file|system|bundle> [source] [--preview x] [--note n] [--metrics '{\"sizeAdjust\":\"96%\"}']",
+          );
+        }
+        const metricsRaw = flagStr(flags, 'metrics');
+        let metrics: Record<string, string> | undefined;
+        if (metricsRaw !== undefined) {
+          try {
+            metrics = JSON.parse(metricsRaw) as Record<string, string>;
+          } catch {
+            throw new Error(`metrics 不是合法 JSON：${metricsRaw}`);
+          }
+        }
+        const preview = flagStr(flags, 'preview');
+        const note = flagStr(flags, 'note');
+        out = await call('paintress_font', {
+          action: 'add',
+          path: a1,
+          family: a2,
+          kind: positionals[3],
+          ...(positionals[4] !== undefined ? { source: positionals[4] } : {}),
+          ...(preview !== undefined ? { preview } : {}),
+          ...(note !== undefined ? { note } : {}),
+          ...(metrics !== undefined ? { metrics } : {}),
+        });
+      } else {
+        throw new Error(`未知 font 动作：${action}（list / add / remove / default）`);
       }
       console.log(JSON.stringify(out, null, 2));
       return 0;

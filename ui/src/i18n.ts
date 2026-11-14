@@ -49,6 +49,9 @@ export interface Messages {
   versionTitle: string;
   /** 项目行上的 agent 在线指示灯悬停文案 */
   agentOnline: string;
+  fontBadge: (loaded: number, total: number) => string;
+  fontMissing: (list: string) => string;
+  fontTitle: (total: number) => string;
   /** 单帧导出 */
   exportFrame: string;
   exportScale: string;
@@ -145,6 +148,9 @@ const MESSAGES: Record<Lang, Messages> = {
     close: '关闭',
     versionTitle: '版本',
     agentOnline: 'agent 已接入',
+    fontBadge: (loaded, total) => `字体 ${loaded}/${total}`,
+    fontMissing: (list) => `字体缺失：${list}（已用替代字体）`,
+    fontTitle: (total) => `${total} 个字体已加载`,
     exportFrame: '导出 PNG',
     exportScale: '倍率',
     quickSwitch: '切换设计稿',
@@ -229,6 +235,9 @@ const MESSAGES: Record<Lang, Messages> = {
     close: 'Close',
     versionTitle: 'Version',
     agentOnline: 'Agent attached',
+    fontBadge: (loaded, total) => `Fonts ${loaded}/${total}`,
+    fontMissing: (list) => `Missing fonts: ${list} (substituted)`,
+    fontTitle: (total) => `${total} fonts loaded`,
     exportFrame: 'Export PNG',
     exportScale: 'Scale',
     quickSwitch: 'Switch file',

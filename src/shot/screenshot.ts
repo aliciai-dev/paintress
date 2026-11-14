@@ -1,11 +1,13 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 import { renderDocument, type BoardBox } from '../render/index.js';
 import { loadDoc } from '../doc/io.js';
-import { applyProjectPresets } from '../doc/project.js';
+import { applyProjectPresets, findProjectRoot, projectFontRegistry } from '../doc/project.js';
+import { isGenericFamily, planFonts, splitFontStack } from '../doc/fonts.js';
+import { pathToFileURL } from 'node:url';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -100,6 +102,8 @@ export interface ShotResult {
   board?: ShotBoard;
   warnings: string[];
   browser: string;
+  /** 字体加载状态（与本次截图同一个浏览器）：missing 为探针判定不可用的 family */
+  fonts?: { status: string; checked: string[]; missing: string[]; substituted: string[] };
 }
 
 function boardLabel(b: BoardBox): string {
@@ -137,8 +141,19 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
     throw new Error('未找到可用浏览器：安装 Chromium/Chrome，或设置 PTR_BROWSER 指向可执行文件');
   }
   const loaded = loadDoc(penPath);
-  // 项目预设：截图必须与查看器看到的一致
-  const rendered = renderDocument(applyProjectPresets(loaded.doc, penPath).doc);
+  // 项目预设与字体：截图必须与查看器看到的一致（字体走 file://，不需要起 HTTP 服务）
+  const root = findProjectRoot(penPath) ?? dirname(resolve(penPath));
+  const { registry: fontRegistry } = projectFontRegistry(penPath);
+  const fontPlan = planFonts(fontRegistry, (source) =>
+    source.target === undefined ? null : pathToFileURL(resolve(root, source.target)).href,
+  );
+  const rendered = renderDocument(applyProjectPresets(loaded.doc, penPath).doc, { fonts: fontPlan });
+  const probeFamilies = [
+    ...new Set([
+      ...Object.keys(fontRegistry.families),
+      ...splitFontStack(fontPlan.defaultStack).filter((family) => !isGenericFamily(family)),
+    ]),
+  ];
   const target = opts.board !== undefined ? selectBoard(rendered.boards, opts.board) : undefined;
   // 只有「显式存了尺寸」的画板才能在开浏览器前判定为 0；自动尺寸的板子要进去量了才知道
   const tmpDir = mkdtempSync(join(tmpdir(), 'paintress-shot-'));
@@ -147,11 +162,24 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
   let clip: { x: number; y: number; width: number; height: number };
   let measuredBoard: BoardBox | undefined;
   let usedScale: number = DEFAULT_SHOT_SCALE;
+  let fontsReport: { status: string; checked: string[]; missing: string[] } | undefined;
   const extraWarnings: string[] = [];
+  // 字体分片只下一次：给 Chromium 一个持久磁盘缓存，而不是每次截图重建上下文重拉
+  const cacheDir = join(process.env['PAINTRESS_HOME'] ?? join(homedir(), '.paintress'), 'chromium-cache');
+  try {
+    mkdirSync(cacheDir, { recursive: true });
+  } catch {
+    /* 缓存目录建不了就退回默认 */
+  }
   try {
     const browser = await chromium.launch({
       executablePath: browserPath,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        `--disk-cache-dir=${cacheDir}`,
+        '--disk-cache-size=67108864',
+      ],
     });
     try {
       // 倍率先按声明尺寸估一版（自动尺寸的板子要进去量了才知道），量完再按真实 clip 收口
@@ -165,6 +193,22 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
         deviceScaleFactor: initial.scale,
       });
       await page.goto(`file://${htmlPath}`);
+      // 字体先就绪（3s 超时）：网络字体没加载完就测量/截图会抖
+      const fontsScript = `(async () => {
+        const families = ${JSON.stringify(probeFamilies)};
+        const wait = new Promise((r) => setTimeout(r, 3000));
+        if (window.__paintressFontsReady) await Promise.race([window.__paintressFontsReady, wait]);
+        else if (document.fonts && document.fonts.ready) await Promise.race([document.fonts.ready, wait]);
+        if (!document.fonts) return { status: 'n/a', checked: families, missing: [] };
+        const c = document.createElement('canvas').getContext('2d');
+        const text = '漢字Abc123 光伴';
+        const w = (f, b) => { c.font = '32px "' + f + '", ' + b; return c.measureText(text).width; };
+        const sb = w('__paintress_missing__', 'serif');
+        const mb = w('__paintress_missing__', 'monospace');
+        const missing = families.filter((f) => Math.abs(w(f, 'serif') - sb) < 0.5 && Math.abs(w(f, 'monospace') - mb) < 0.5);
+        return { status: document.fonts.status, checked: families, missing };
+      })()`;
+      fontsReport = (await page.evaluate(fontsScript)) as { status: string; checked: string[]; missing: string[] };
       await page.waitForTimeout(opts.settleMs ?? 120);
       // 用字符串表达式：src 侧没有 DOM 类型库，也不需要为测量引入一份
       const measuredScript = `(() => {
@@ -278,12 +322,19 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
   const size = statSync(outPng).size;
   if (size === 0) throw new Error('截图产物为空文件');
   const canvas = { width: Math.max(rendered.canvas.width, clip.x + clip.width), height: Math.max(rendered.canvas.height, clip.y + clip.height) };
+  const substituted = (fontsReport?.missing ?? []).filter((family) => fontPlan.previews[family] !== undefined);
+  if (fontsReport !== undefined && fontsReport.missing.length > 0) {
+    extraWarnings.push(
+      `字体缺失：${fontsReport.missing.join('、')}${substituted.length > 0 ? `（用替代：${substituted.join('、')}）` : ''}`,
+    );
+  }
   const result: ShotResult = {
     out: outPng,
     canvas,
     scale: usedScale,
     warnings: [...rendered.warnings, ...extraWarnings],
     browser: browserPath,
+    ...(fontsReport !== undefined ? { fonts: { ...fontsReport, substituted } } : {}),
   };
   if (measuredBoard !== undefined) {
     result.board = {

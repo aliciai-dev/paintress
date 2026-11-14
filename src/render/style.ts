@@ -1,4 +1,5 @@
 import type { VarResolver, Warnings } from './vars.js';
+import { stackWithPreviews } from '../doc/fonts.js';
 
 /**
  * 样式映射：fill / stroke / effect / 文本 / 公共变换 → CSS 声明。
@@ -305,13 +306,18 @@ export function effectsToCss(effectsRaw: unknown, vars: VarResolver, warnings: W
 }
 
 /** 文本样式；文本颜色来自 fill（实文件如此：text 节点 fill 即字色） */
-export function textToCss(node: AnyNode, vars: VarResolver, warnings: Warnings): CSSDecl[] {
+export function textToCss(
+  node: AnyNode,
+  vars: VarResolver,
+  warnings: Warnings,
+  fontPreviews?: Record<string, string>,
+): CSSDecl[] {
   const decls: CSSDecl[] = [];
   const num = (k: string): number | undefined => vars.resolveNum(node[k] as number | string);
   const str = (k: string): string | undefined => (typeof node[k] === 'string' ? vars.resolve(node[k] as string) : undefined);
 
   const ff = str('fontFamily');
-  if (ff) decls.push(['font-family', ff]);
+  if (ff) decls.push(['font-family', fontPreviews === undefined ? ff : stackWithPreviews(ff, fontPreviews)]);
   const fs = num('fontSize');
   if (fs !== undefined) decls.push(['font-size', `${fs}px`]);
   const fw = str('fontWeight');

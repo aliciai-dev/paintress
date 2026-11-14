@@ -24,7 +24,13 @@ VIEWER — the human only sees your work in the viewer:
 - MCP equivalent: \`paintress_viewer\` returns the same URL. Append \`?file=<relative path>\` to deep-link one document.
 
 WORKFLOW: \`paintress_new\` → \`paintress_query\`/\`paintress_get\` for real node ids (never invent them) → \`paintress_update\`/\`insert\`/\`move\`/\`delete\` or \`paintress_batch\` → \`paintress_validate\` → \`paintress_screenshot\` to check the result with your own eyes.
-\`#1\` in the conversation is a click marker from the viewer: resolve it with \`paintress_marks\`.`;
+\`#1\` in the conversation is a click marker from the viewer: resolve it with \`paintress_marks\`.
+
+DESIGN SYSTEM — one source of truth; do not paste values:
+- Before the first shape call \`paintress_preset list\`; if it is empty use \`paintress_preset seed\` (dry-run, then apply) or set tokens, and reference them as \`$key\`.
+- Before building a button, card or input call \`paintress_component list\`; insert one that fits. Use \`paintress_component add\` once the same shape is needed a second time.
+- \`paintress_font list\` shows the font registry; register families with a source and a preview. Text without a fontFamily uses the default and is reported on every read — close that gap.
+- After a batch run \`paintress_validate\`; it reports design-system drift, wrong token kinds and font gaps.`;
 
 /** 写操作前补一次查看器：这是「光画不开 web」的兜底网，不靠 agent 自觉 */
 const WRITE_TOOLS = new Set([

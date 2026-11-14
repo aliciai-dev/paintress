@@ -287,12 +287,18 @@ function svgShapeHtml(shape: SvgShape): string {
   );
 }
 
+export interface FontRenderContext {
+  /** family → 设计期替代栈（渲染时拼在真字体后面） */
+  previews: Record<string, string>;
+}
+
 function renderNode(
   node: AnyNode,
   parentLayout: 'none' | 'horizontal' | 'vertical',
   vars: VarResolver,
   warnings: Warnings,
   extraAttrs: readonly string[] = [],
+  fonts?: FontRenderContext,
 ): string {
   const type = String(node['type'] ?? '?');
   // 节点可以锁主题（`theme: {mode, density}`）：沿子树覆盖，变量取对应主题项
@@ -336,7 +342,7 @@ function renderNode(
   let inner = '';
   switch (type) {
     case 'text': {
-      css.push(...textToCss(node, scoped, warnings));
+      css.push(...textToCss(node, scoped, warnings, fonts?.previews));
       const content = typeof node['content'] === 'string' ? scoped.resolve(node['content']) : '';
       inner = escapeHtml(content);
       break;
@@ -429,7 +435,7 @@ function renderNode(
 
   const kidsRaw = node['children'];
   const childrenHtml = Array.isArray(kidsRaw)
-    ? kidsRaw.filter(isRecord).map((k) => renderNode(k, effective, scoped, warnings)).join('')
+    ? kidsRaw.filter(isRecord).map((k) => renderNode(k, effective, scoped, warnings, [], fonts)).join('')
     : '';
 
   const cssStr = css.map(([p, v]) => `${p}:${v}`).join(';');
@@ -480,13 +486,13 @@ export function boardBoxes(nodes: PenNode[], vars: VarResolver): BoardBox[] {
 }
 
 /** 渲染整棵（已展开的）树：顶层节点在画布上绝对定位，并带画布元数据 */
-export function renderTree(nodes: PenNode[], vars: VarResolver, warnings: Warnings): string {
+export function renderTree(nodes: PenNode[], vars: VarResolver, warnings: Warnings, fonts?: FontRenderContext): string {
   return nodes
     .filter(isRecord)
     .map((n) => {
       // 画板几何也要按它自己的主题算（light/loose 板子的坐标可能引用主题变量）
       const scoped = isRecord(n['theme']) ? vars.withTheme(n['theme']) : vars;
-      return renderNode(n, 'none', vars, warnings, boardAttrs(n, scoped));
+      return renderNode(n, 'none', vars, warnings, boardAttrs(n, scoped), fonts);
     })
     .join('');
 }

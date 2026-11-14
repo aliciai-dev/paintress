@@ -107,6 +107,12 @@ describe('auditDoc', () => {
     expect(run().summary).toMatch(/越界裸值 \d+/);
   });
 
+  it('字体缺口也进审计（text 没写字体 / 未登记 family）', () => {
+    const r = run();
+    expect(r.counts['font-missing']).toBeGreaterThan(0);
+    expect(r.counts['font-unregistered']).toBeGreaterThan(0);
+  });
+
   it('字号建议 $fontSize-16、字体族建议 $font-ui（fontSize 不再被归到 font）', () => {
     const r = run();
     const size = r.findings.find((f) => f.kind === 'literal' && f.where === 'sized' && f.message.includes('fontSize'));

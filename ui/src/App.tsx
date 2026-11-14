@@ -128,6 +128,21 @@ export default function App() {
   const [activeProject, setActiveProject] = createSignal<string | null>(null);
   const [files, setFiles] = createSignal<string[]>([]);
   const [activeFile, setActiveFile] = createSignal<string | null>(null);
+  const [fontReport, setFontReport] = createSignal<{ checked: string[]; missing: string[] } | null>(null);
+  // 切稿时先清掉上一张稿的字体报告，等新稿的探针回来再显示
+  createEffect(on(activeFile, () => setFontReport(null)));
+  onMount(() => {
+    const onMessage = (ev: MessageEvent): void => {
+      const data = ev.data as { type?: unknown; checked?: unknown; missing?: unknown } | null;
+      if (data === null || typeof data !== 'object' || data.type !== 'paintress-fonts') return;
+      setFontReport({
+        checked: Array.isArray(data.checked) ? data.checked.map(String) : [],
+        missing: Array.isArray(data.missing) ? data.missing.map(String) : [],
+      });
+    };
+    window.addEventListener('message', onMessage);
+    onCleanup(() => window.removeEventListener('message', onMessage));
+  });
   const [marks, setMarks] = createSignal<Mark[]>([]);
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [crumbs, setCrumbs] = createSignal<Crumb[]>([]);
@@ -1107,6 +1122,19 @@ export default function App() {
                 <span class="badge-new">v{updateAvailable()}</span>
               </button>
             </Show>
+          </Show>
+          <Show when={fontReport()}>
+            {(report) => (
+              <span
+                class="badge"
+                classList={{ 'badge-warn': report().missing.length > 0 }}
+                title={
+                  report().missing.length > 0 ? m().fontMissing(report().missing.join('、')) : m().fontTitle(report().checked.length)
+                }
+              >
+                {m().fontBadge(report().checked.length - report().missing.length, report().checked.length)}
+              </span>
+            )}
           </Show>
         </header>
 

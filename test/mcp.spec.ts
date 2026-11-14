@@ -44,14 +44,14 @@ async function callRaw(name: string, args: Record<string, unknown>): Promise<Too
 }
 
 describe('工具发现', () => {
-  it('注册 19 个工具', async () => {
+  it('注册 20 个工具', async () => {
     const list = await client.listTools();
     expect(list.tools.map((t) => t.name).sort()).toEqual([
       'paintress_adjust', 'paintress_audit', 'paintress_batch', 'paintress_component',
-      'paintress_delete', 'paintress_doc_info', 'paintress_establish', 'paintress_get',
-      'paintress_insert', 'paintress_marks', 'paintress_move', 'paintress_new',
-      'paintress_preset', 'paintress_query', 'paintress_render', 'paintress_screenshot',
-      'paintress_update', 'paintress_validate', 'paintress_viewer',
+      'paintress_delete', 'paintress_doc_info', 'paintress_establish', 'paintress_font',
+      'paintress_get', 'paintress_insert', 'paintress_marks', 'paintress_move',
+      'paintress_new', 'paintress_preset', 'paintress_query', 'paintress_render',
+      'paintress_screenshot', 'paintress_update', 'paintress_validate', 'paintress_viewer',
     ]);
   });
 
@@ -86,10 +86,12 @@ describe('读工具', () => {
     expect(res['truncated']).toBe(true);
   });
 
-  it('validate：干净文档无警告', async () => {
+  it('validate：结构干净，只报字体缺口（text 没写 fontFamily）', async () => {
     const v = (await call('paintress_validate', { path: tmpFile })) as Record<string, unknown>;
     expect(v['ok']).toBe(true);
-    expect(v['warnings']).toEqual([]);
+    const warnings = v['warnings'] as { level: string; message: string }[];
+    expect(warnings.some((w) => w.message.includes('没有 fontFamily'))).toBe(true);
+    expect(warnings.every((w) => w.level === 'warning')).toBe(true);
   });
 });
 

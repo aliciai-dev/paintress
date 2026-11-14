@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { loadDoc, saveDoc, type DocFlavor } from '../doc/io.js';
 import { createDoc } from '../doc/create.js';
 import { collectIds, genId } from '../doc/id.js';
@@ -9,8 +10,11 @@ import { auditDoc, auditInputFrom } from '../doc/audit.js';
 import { applyAdjust, applyEstablish, planAdjust, planEstablish, readPresetDoc } from '../doc/album.js';
 import {
   applyProjectPresets,
+  COMPONENTS_FILE,
   componentsPathFor,
-  projectPresetKinds,
+  ensureProjectScaffold,
+  findProjectRoot,
+  projectFontRegistry,
   projectPresetNames,
   findNodeIn,
   isPresetType,
@@ -22,14 +26,21 @@ import {
   removePresetGroup,
   presetPathFor,
   readComponentsFile,
+  removeFontEntry,
   removePreset,
+  seedDesignSystem,
+  setDefaultFont,
+  setFontEntry,
   setPreset,
 } from '../doc/project.js';
+import { isGenericFamily, planFonts, splitFontStack, textFontGaps } from '../doc/fonts.js';
+import { PROP_TOKEN_KIND } from '../doc/presets.js';
 import { query as q, get as g, update as u, insert as i, remove as rm, move as mv, batch as bt, type BatchOp } from '../ops/index.js';
 import { expandRefs, renderDocument } from '../render/index.js';
 import { screenshotPen, findBrowser } from '../shot/screenshot.js';
 import { isDaemonRunning, sendRequest } from '../web/client.js';
 import { ensureViewer } from '../web/autoregister.js';
+import type { PenDocument } from '../schema/index.js';
 
 /**
  * 工具层：MCP 与 CLI 共享同一套 handler（无状态）。
@@ -91,6 +102,78 @@ function notifyChanges(path: string, ids: string[]): void {
   });
 }
 
+/** 当前设计系统概览：token 计数、preset 组、字体、组件、字体缺口 */
+function designSystemFor(path: string, doc: PenDocument): Record<string, unknown> {
+  const presets = listPresets(path);
+  const groups = listPresetGroups(path).groups;
+  const fonts = projectFontRegistry(path).registry;
+  const compPath = componentsPathFor(path);
+  const components = compPath === null ? [] : listComponents(compPath);
+  const gaps = textFontGaps(doc, fonts);
+  const tokens: Record<string, number> = { color: 0, radius: 0, spacing: 0, fontSize: 0, font: 0 };
+  for (const item of presets.items) tokens[item.type] = (tokens[item.type] ?? 0) + 1;
+  const empty = presets.items.length === 0 && components.length === 0;
+  return {
+    presetPath: presets.path,
+    tokens,
+    groups: Object.entries(groups).map(([name, group]) => ({ name, target: group.target, props: group.props })),
+    fonts: { default: fonts.default ?? null, families: Object.keys(fonts.families) },
+    components: components.length,
+    gaps: { textNodes: gaps.textNodes, ids: gaps.ids, unregistered: gaps.unregistered },
+    ...(empty
+      ? { next: '项目还没有设计系统：用 paintress_preset seed 建立尺度，再 paintress_font list 看字体' }
+      : {}),
+  };
+}
+
+/** 写完给 agent 的提示：等值 token、没写字体、未登记字体（最多 3 条，不阻断） */
+function collectHints(path: string, doc: PenDocument, ids: string[]): string[] {
+  const items = listPresets(path).items;
+  const colorByValue = new Map<string, string>();
+  const numberByKind = new Map<string, string>();
+  const familyByValue = new Map<string, string>();
+  for (const item of items) {
+    if (item.type === 'color') colorByValue.set(item.value.toUpperCase(), item.key);
+    else if (item.type === 'font') familyByValue.set(item.value, item.key);
+    else numberByKind.set(`${item.type}:${item.value}`, item.key);
+  }
+  const registry = projectFontRegistry(path).registry;
+  const hints: string[] = [];
+  for (const id of [...new Set(ids)]) {
+    const node = findNodeIn(doc.children, id);
+    if (node === null) continue;
+    if (node['type'] === 'text') {
+      const ff = node['fontFamily'];
+      if (typeof ff !== 'string' || ff.trim() === '') {
+        hints.push(`${id}: text 没有 fontFamily，正在用默认字体；补一个 $font-* 或 family`);
+      } else if (!ff.startsWith('$')) {
+        for (const family of splitFontStack(ff)) {
+          if (!isGenericFamily(family) && registry.families[family] === undefined) {
+            hints.push(`${id}: 字体 ${family} 未登记（paintress_font add）`);
+          }
+        }
+      }
+    }
+    for (const [prop, value] of Object.entries(node)) {
+      if (prop === 'children') continue;
+      const kind = PROP_TOKEN_KIND[prop];
+      if (kind === undefined) continue;
+      if (typeof value === 'string' && value.startsWith('$')) continue;
+      if (kind === 'color' && typeof value === 'string') {
+        const hit = colorByValue.get(value.toUpperCase());
+        if (hit !== undefined) hints.push(`${id}.${prop} 写了裸色值 ${value}，可写 $${hit}`);
+      } else if ((kind === 'radius' || kind === 'spacing' || kind === 'fontSize') && typeof value === 'number') {
+        const hit = numberByKind.get(`${kind}:${String(value)}`);
+        if (hit !== undefined) hints.push(`${id}.${prop} 写了裸值 ${value}，可写 $${hit}`);
+      } else if (kind === 'font' && typeof value === 'string') {
+        const hit = familyByValue.get(value);
+        if (hit !== undefined) hints.push(`${id}.${prop} 写了字体族 ${value}，可写 $${hit}`);
+      }
+    }
+  }
+  return [...new Set(hints)].slice(0, 3);
+}
+
 /**
  * 写：load → 变更 → 校验（结构错误不落盘）→ 原子保存（保持原风味）。
  * fn 可通过 mark() 登记受影响的节点 id，写成功后统一通知 daemon。
@@ -98,7 +181,7 @@ function notifyChanges(path: string, ids: string[]): void {
 async function write(
   path: string,
   fn: (doc: ReturnType<typeof loadDoc>['doc'], mark: (ids: string[]) => void) => unknown,
-): Promise<{ ok: true; result: unknown; warnings: unknown[] }> {
+): Promise<{ ok: true; result: unknown; warnings: unknown[]; hints: string[] }> {
   const loaded = loadDoc(path);
   const touched: string[] = [];
   const mark = (ids: string[]): void => {
@@ -112,14 +195,15 @@ async function write(
     knownVars: presetNames,
     presetVars: presetNames,
     presetGroups: listPresetGroups(path).groups,
-    presetKinds: projectPresetKinds(path),
+    presetKinds: Object.fromEntries(listPresets(path).items.map((item) => [item.key, item.type])),
+    fontRegistry: projectFontRegistry(path).registry,
   });
   if (!v.ok) {
     throw new Error(`变更后结构校验失败，未落盘：\n${v.errors.map((e) => `  ${e.path}: ${e.message}`).join('\n')}`);
   }
   saveDoc(path, loaded.doc, { expectedMtimeMs: loaded.mtimeMs, flavor: loaded.flavor });
   notifyChanges(path, touched);
-  return { ok: true, result, warnings: v.warnings };
+  return { ok: true, result, warnings: v.warnings, hints: collectHints(path, loaded.doc, touched) };
 }
 
 function countByType(children: unknown[]): Record<string, number> {
@@ -185,10 +269,36 @@ function newDoc(args: Record<string, unknown>): ToolOutput {
     version: doc.version,
     boardId,
     canvas: { width: Number(board?.['width'] ?? 0), height: Number(board?.['height'] ?? 0) },
+    designSystem: designSystemFor(path, doc),
     warnings: check.warnings,
   };
 }
 
+
+/** 摘掉整棵子树的 `reusable`：复制件是实例，不是组件定义 */
+function stripReusableDeep(node: unknown): void {
+  if (!node || typeof node !== 'object') return;
+  const rec = node as Record<string, unknown>;
+  delete rec['reusable'];
+  const kids = rec['children'];
+  if (Array.isArray(kids)) for (const k of kids) stripReusableDeep(k);
+}
+
+/** 按 name 找节点（组件同名提示用）；返回前 5 个 */
+function findNodesByName(nodes: unknown[], name: string): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  const walk = (list: unknown[]): void => {
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object') continue;
+      const rec = raw as Record<string, unknown>;
+      if (rec['name'] === name && typeof rec['id'] === 'string') out.push({ id: rec['id'], name });
+      const kids = rec['children'];
+      if (Array.isArray(kids)) walk(kids);
+    }
+  };
+  walk(nodes);
+  return out.slice(0, 5);
+}
 
 /** 复制进设计稿前给整棵子树换新 id：组件库与目标文件的 id 空间互不相干 */
 function remapIds(node: unknown, taken: Set<string>): void {
@@ -206,11 +316,11 @@ function remapIds(node: unknown, taken: Set<string>): void {
 export const TOOLS: Record<string, ToolDef> = {
   paintress_viewer: {
     description:
-      '确保本地查看器在运行，并把当前项目注册进去。幂等：已在运行就直接复用（返回现有 pid/端口，绝不起第二个进程），可以在开始画/改/展示设计稿之前无条件调用。**开始作画前先调它，不要等人提醒**',
+      'Ensure the local viewer is running and register the current project. Idempotent: reuse the running process (returns its pid/port, never starts a second one). Call it before drawing, editing or showing a design, without waiting to be asked.',
     inputSchema: {
-      dir: z.string().optional().describe('要注册的目录，默认当前工作目录'),
-      project: z.string().optional().describe('项目名（URL 里那一段），默认取「父目录/目录名」'),
-      depth: z.number().int().min(1).max(6).optional().describe('列举设计稿的最大深度，默认 3'),
+      dir: z.string().optional().describe('Directory to register; defaults to the current working directory'),
+      project: z.string().optional().describe('Project name (the URL segment); defaults to parent/dir'),
+      depth: z.number().int().min(1).max(6).optional().describe('Max depth when listing designs; default 3'),
     },
     run: async (a) => {
       const dir = optStr(a, 'dir');
@@ -234,48 +344,51 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_new: {
     description:
-      '新建一份设计稿：创建一个带空 board 的最小可用文档，可直接 render/screenshot 再逐层 insert；已存在同名文件时报错，除非 overwrite=true。path 不带扩展名时自动补默认扩展名',
+      'Create a design file: a minimal document with one empty board, ready to render/screenshot and fill with insert. Refuses to overwrite unless overwrite=true. A path without an extension gets the default one.',
     inputSchema: {
-      path: z.string().describe('新文档路径；不带扩展名时自动补默认扩展名'),
-      name: z.string().optional().describe('board 名称（默认 Board）'),
-      width: z.number().positive().optional().describe('board 宽（默认 900）'),
-      height: z.number().positive().optional().describe('board 高（默认 600）'),
-      fill: z.string().optional().describe('board 背景色（默认 #FFFFFF）'),
-      layout: z.enum(['vertical', 'horizontal', 'none']).optional().describe('子节点布局（默认 vertical）'),
-      padding: z.number().optional().describe('board 内边距（默认 0）'),
-      gap: z.number().optional().describe('主轴向间距（默认 0）'),
-      overwrite: z.boolean().optional().describe('已存在时覆盖（默认 false）'),
+      path: z.string().describe('New document path; a missing extension gets the default one'),
+      name: z.string().optional().describe('Board name (default Board)'),
+      width: z.number().positive().optional().describe('Board width (default 900)'),
+      height: z.number().positive().optional().describe('Board height (default 600)'),
+      fill: z.string().optional().describe('Board background (default #FFFFFF)'),
+      layout: z.enum(['vertical', 'horizontal', 'none']).optional().describe('Child layout (default vertical)'),
+      padding: z.number().optional().describe('Board padding (default 0)'),
+      gap: z.number().optional().describe('Main-axis gap (default 0)'),
+      overwrite: z.boolean().optional().describe('Overwrite when the file exists (default false)'),
     },
     run: (a) => newDoc(a),
   },
 
   paintress_doc_info: {
-    description: '文档摘要：版本、格式风味、节点统计、变量表、顶层节点',
-    inputSchema: { path: z.string().describe('设计稿路径') },
-    run: (a) =>
-      read(reqStr(a, 'path'), (ctx) => ({
+    description: 'Document summary: version, flavor, node counts, variables, top-level nodes, and a design-system overview including font gaps.',
+    inputSchema: { path: z.string().describe('Design file path') },
+    run: (a) => {
+      const path = reqStr(a, 'path');
+      return read(path, (ctx) => ({
         flavor: ctx.flavor,
         version: ctx.doc.version,
         fileToken: ctx.doc.fileToken,
         variables: ctx.doc.variables ? Object.keys(ctx.doc.variables) : [],
         projectPresets: (() => {
-          const { path: presetPath, items } = listPresets(reqStr(a, 'path'));
+          const { path: presetPath, items } = listPresets(path);
           return { path: presetPath, count: items.length };
         })(),
         topLevel: ctx.doc.children.map((c) => ({ id: (c as Record<string, unknown>)['id'], name: (c as Record<string, unknown>)['name'], type: (c as Record<string, unknown>)['type'] })),
         nodeCount: Object.values(countByType(ctx.doc.children)).reduce((s, n) => s + n, 0),
         byType: countByType(ctx.doc.children),
+        designSystem: designSystemFor(path, ctx.doc),
         warnings: ctx.validation.warnings,
-      })),
+      }));
+    },
   },
 
   paintress_query: {
-    description: '条件查询节点：type / name（精确或正则）/ id / reusable',
+    description: 'Find nodes by type / name (exact or regex) / id / reusable.',
     inputSchema: {
       path: z.string(),
       type: z.string().optional(),
       name: z.string().optional(),
-      nameRegex: z.boolean().optional().describe('name 按正则解释'),
+      nameRegex: z.boolean().optional().describe('Interpret name as a regex'),
       id: z.string().optional(),
       reusable: z.boolean().optional(),
     },
@@ -292,18 +405,25 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_get: {
-    description: '取单个节点子树；depth 控制深度（0=仅本节点，children 省略为 …）',
+    description: 'Read one node subtree; depth controls how far down (0 = this node only, children elided as ...).',
     inputSchema: { path: z.string(), id: z.string(), depth: z.number().int().min(0).optional() },
     run: (a) =>
       read(reqStr(a, 'path'), (ctx) => {
         const res = g(ctx.doc, reqStr(a, 'id'), optNum(a, 'depth') ?? Infinity);
         if (!res) throw new Error(`节点不存在：${reqStr(a, 'id')}`);
+        // 文本节点没写字体：给一条 hint，让 agent 决定要不要补（不阻断）
+        if (res !== null && typeof res === 'object' && !Array.isArray(res)) {
+          const rec = res as Record<string, unknown>;
+          if (rec['type'] === 'text' && (typeof rec['fontFamily'] !== 'string' || rec['fontFamily'].trim() === '')) {
+            return { ...rec, hint: '这个 text 节点没有 fontFamily，正在用默认字体；补一个 $font-* 或 family' };
+          }
+        }
         return res;
       }),
   },
 
   paintress_update: {
-    description: '浅合并更新节点属性（id 与 type 不可改）',
+    description: 'Shallow-merge attributes on one node (id and type are immutable).',
     inputSchema: { path: z.string(), id: z.string(), patch: z.record(z.unknown()) },
     run: (a) =>
       write(reqStr(a, 'path'), (doc, mark) => {
@@ -315,7 +435,7 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_insert: {
-    description: '插入子节点（缺 id 自动生成；返回新 id）',
+    description: 'Insert a child node (an id is generated when missing; returns the new id).',
     inputSchema: {
       path: z.string(),
       parent: z.string().describe("父节点 id，或 'root'"),
@@ -331,7 +451,7 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_delete: {
-    description: '删除节点（含子树）',
+    description: 'Delete a node and its subtree.',
     inputSchema: { path: z.string(), id: z.string() },
     run: (a) =>
       write(reqStr(a, 'path'), (doc, mark) => {
@@ -343,7 +463,7 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_move: {
-    description: '移动/重排节点到新父（防环校验）',
+    description: 'Reparent or reorder a node (cycle-checked).',
     inputSchema: { path: z.string(), id: z.string(), parent: z.string(), index: z.number().int().min(0).optional() },
     run: (a) =>
       write(reqStr(a, 'path'), (doc, mark) => {
@@ -355,7 +475,7 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_batch: {
-    description: '批量原子操作：update/insert/delete/move 数组，任一步失败整体作废',
+    description: 'Atomic batch: an array of update/insert/delete/move ops; one failure discards the whole batch.',
     inputSchema: { path: z.string(), ops: z.array(z.record(z.unknown())) },
     run: (a) =>
       write(reqStr(a, 'path'), (doc, mark) => {
@@ -382,7 +502,7 @@ export const TOOLS: Record<string, ToolDef> = {
   },
 
   paintress_validate: {
-    description: '校验文档：结构错误 + 语义警告（重复 id、悬空 ref、未知类型、未定义变量）。项目预设里的变量算已定义',
+    description: 'Validate a document: structural errors plus semantic warnings (duplicate ids, dangling refs, unknown types, undefined variables, wrong token kinds, font gaps). Project presets count as defined.',
     inputSchema: { path: z.string() },
     run: (a) => {
       const path = reqStr(a, 'path');
@@ -394,28 +514,33 @@ export const TOOLS: Record<string, ToolDef> = {
         knownVars: presetNames,
         presetVars: presetNames,
         presetGroups: listPresetGroups(path).groups,
-        presetKinds: projectPresetKinds(path),
+        presetKinds: Object.fromEntries(listPresets(path).items.map((item) => [item.key, item.type])),
+        fontRegistry: projectFontRegistry(path).registry,
       });
     },
   },
 
   paintress_preset: {
     description:
-      '项目预设（画谱的 token 与谱式）：颜色 / 倒角 / 间距 / 字号 / 字体这类会反复微调的值在项目里存一份（__preset.ptr），设计稿里写 $key 引用。action=list 看全部（含 preset 组），set 新建/改值，remove 删除；set-group 定义一组按节点类型生效的属性（值必须是 $token，如 {fill:"$color-brand"}），节点写 preset:"<组名>" 即生效',
+      'Project presets (album tokens and preset groups): colors, radii, spacing, font sizes and families that get tweaked repeatedly live in __preset.ptr; designs reference them as $key. action=list shows everything (including groups), set creates or updates a token, remove deletes it, seed fills a complete scale in one go (dry-run by default, only missing keys). set-group defines a type-targeted set of properties (values must be $token, e.g. {fill:"$color-brand"}); nodes opt in with preset:"<group>".',
     inputSchema: {
-      action: z.enum(['list', 'set', 'remove', 'set-group', 'remove-group']),
-      path: z.string().optional().describe('设计稿或项目目录，默认当前工作目录'),
-      key: z.string().optional().describe('token 名，设计稿里写 $key；set / remove 必填'),
-      type: z.enum(['color', 'radius', 'spacing', 'fontSize', 'font']).optional().describe('token 类型；set 必填'),
-      name: z.string().optional().describe('人看的名称，默认同 key'),
+      action: z.enum(['list', 'set', 'remove', 'seed', 'set-group', 'remove-group']),
+      apply: z.boolean().optional().describe('seed only: true writes; default false returns created/skipped only'),
+      path: z.string().optional().describe('Design file or project directory; defaults to the current working directory'),
+      key: z.string().optional().describe('Token key, referenced as $key; required for set/remove'),
+      type: z.enum(['color', 'radius', 'spacing', 'fontSize', 'font']).optional().describe('Token type; required for set'),
+      name: z.string().optional().describe('Human-readable name; defaults to the key'),
       value: z.string().optional().describe("值：颜色 #RRGGBB（或 #RGB / #RRGGBBAA），倒角/间距写非负数字，字体写字体族；set 必填"),
-      group: z.string().optional().describe('preset 组名；set-group / remove-group 必填'),
-      target: z.string().optional().describe('preset 组的适用节点类型（frame / text / rectangle …）；set-group 必填'),
-      props: z.record(z.string()).optional().describe('preset 组的属性 → $token 引用，如 {"fill":"$color-brand"}；set-group 必填'),
+      group: z.string().optional().describe('Preset group name; required for set-group/remove-group'),
+      target: z.string().optional().describe('Node type the group applies to (frame/text/rectangle...); required for set-group'),
+      props: z.record(z.string()).optional().describe('Group properties mapped to $tokens, e.g. {"fill":"$color-brand"}; required for set-group'),
     },
     run: (a) => {
       const from = resolve(optStr(a, 'path') ?? process.cwd());
       const action = optStr(a, 'action') ?? 'list';
+      if (action === 'seed') {
+        return { ok: true, ...seedDesignSystem(from, { apply: a['apply'] === true }) };
+      }
       if (action === 'list') {
         const { path, items } = listPresets(from);
         return { ok: true, path, items, groups: listPresetGroups(from).groups };
@@ -454,10 +579,63 @@ export const TOOLS: Record<string, ToolDef> = {
     },
   },
 
+  paintress_font: {
+    description:
+      'Project font registry (x-paintress.fonts in __preset.ptr): list shows sources, previews and the default; add registers a family; remove deletes it; default sets the default font. system/bundle require preview; css/file sources are project-relative paths that must exist; web sources are CSS URLs.',
+    inputSchema: {
+      action: z.enum(['list', 'add', 'remove', 'default']),
+      path: z.string().optional().describe('Design file or project directory; defaults to the current working directory'),
+      family: z.string().optional().describe('Real font family name; required for add/remove'),
+      kind: z.enum(['web', 'css', 'file', 'system', 'bundle']).optional().describe('Source kind; required for add'),
+      source: z.string().optional().describe('web: a CSS URL; css/file: a project-relative path'),
+      preview: z.string().optional().describe('Design-time substitute font; required for system/bundle'),
+      note: z.string().optional(),
+      metrics: z
+        .object({
+          sizeAdjust: z.string().optional(),
+          ascentOverride: z.string().optional(),
+          descentOverride: z.string().optional(),
+          lineGapOverride: z.string().optional(),
+        })
+        .optional()
+        .describe('Metrics overrides for the substitute (CSS font metrics overrides)'),
+      value: z.string().optional().describe('For default: a font token key or a family'),
+    },
+    run: (a) => {
+      const from = resolve(optStr(a, 'path') ?? process.cwd());
+      const action = optStr(a, 'action') ?? 'list';
+      if (action === 'list') {
+        const { path, registry } = projectFontRegistry(from);
+        return { ok: true, path, ...registry };
+      }
+      if (action === 'remove') {
+        return { ok: true, ...removeFontEntry(from, reqStr(a, 'family')) };
+      }
+      if (action === 'default') {
+        return { ok: true, ...setDefaultFont(from, reqStr(a, 'value')) };
+      }
+      const kind = reqStr(a, 'kind');
+      const source = optStr(a, 'source');
+      const preview = optStr(a, 'preview');
+      const note = optStr(a, 'note');
+      const metrics = a['metrics'];
+      return {
+        ok: true,
+        ...setFontEntry(from, {
+          family: reqStr(a, 'family'),
+          source: { kind, ...(source !== undefined ? { target: source } : {}) },
+          ...(preview !== undefined ? { preview } : {}),
+          ...(note !== undefined ? { note } : {}),
+          ...(metrics !== null && typeof metrics === 'object' ? { metrics: metrics as Record<string, string> } : {}),
+        }),
+      };
+    },
+  },
+
   paintress_audit: {
     description:
-      '画谱审计（只读）：列出把颜色/圆角/间距写成裸值、可替换成 $token 的节点；孤儿 token；从未被节点引用的 preset 组；悬空的 preset 引用；preset 组里写死字面量的属性。改不改由你和人决定',
-    inputSchema: { path: z.string().describe('设计稿路径（项目预设自动从所在项目读取）') },
+      'Read-only album audit: nodes whose colors/radii/spacing are literals that could be $token; orphan tokens; preset groups never referenced; dangling preset refs; literal values inside preset groups. You and the human decide what to change.',
+    inputSchema: { path: z.string().describe('Design file path (project presets are read from its project)') },
     run: (a) => {
       const path = reqStr(a, 'path');
       const loaded = loadDoc(path);
@@ -475,11 +653,11 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_establish: {
     description:
-      '画谱提取：从现有设计稿里找出重复出现的字面量（颜色/圆角/间距）建议成 $token，并把「同类节点带同一组属性」建议成 preset 组。默认只给建议（apply=false）；apply=true 会写 __preset.ptr 并把命中的节点改写成引用（带 mtime 防覆盖）',
+      'Album extraction: find repeated literals (colors/radii/spacing) and suggest $tokens, and suggest preset groups from same-type nodes carrying the same property set. Dry-run by default (apply=false); apply=true writes __preset.ptr and rewrites matched nodes to references (mtime guarded).',
     inputSchema: {
-      path: z.string().describe('设计稿路径'),
-      apply: z.boolean().optional().describe('true 才落盘：写预设文件并改写节点；默认 false 只出建议'),
-      minUses: z.number().int().min(2).optional().describe('至少出现几次才算候选，默认 2'),
+      path: z.string().describe('Design file path'),
+      apply: z.boolean().optional().describe('true writes the preset file and rewrites nodes; default false only suggests'),
+      minUses: z.number().int().min(2).optional().describe('Minimum occurrences for a candidate; default 2'),
     },
     run: (a) => {
       const path = reqStr(a, 'path');
@@ -493,14 +671,14 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_adjust: {
     description:
-      '画谱调整：改一处、先看影响面。key=改一个 token 的值；group+prop=改 preset 组的某个属性。默认 dry-run（apply=false）只返回受影响节点与 before→after；apply=true 才写 __preset.ptr——设计稿里的 $引用自动跟着变，不需要批量改稿',
+      'Album adjustment: change one value and see the blast radius first. key=change one token; group+prop=change one group property. Dry-run by default (apply=false) returns affected nodes with before->after; apply=true writes __preset.ptr only, so design references follow automatically.',
     inputSchema: {
-      path: z.string().describe('设计稿路径（项目预设自动从所在项目读取）'),
-      key: z.string().optional().describe('要改的 token 名'),
-      group: z.string().optional().describe('要改的 preset 组名'),
-      prop: z.string().optional().describe('组里要改的属性名（配合 group）'),
-      value: z.string().describe('新值：颜色 #RRGGBB，数值写数字，字体写字体族'),
-      apply: z.boolean().optional().describe('true 才写预设文件；默认 false 只出影响面'),
+      path: z.string().describe('Design file path (project presets are read from its project)'),
+      key: z.string().optional().describe('Token key to change'),
+      group: z.string().optional().describe('Preset group to change'),
+      prop: z.string().optional().describe('Group property to change (with group)'),
+      value: z.string().describe('New value: #RRGGBB for colors, a number for dimensions, a family for fonts'),
+      apply: z.boolean().optional().describe('true writes the preset file; default false only previews'),
     },
     run: (a) => {
       const path = reqStr(a, 'path');
@@ -529,11 +707,11 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_component: {
     description:
-      '项目组件库：先查已有组件再动手，避免重复造轮子。action=list 列出可复用组件（__components.ptr 里 reusable 节点）；action=insert 把某个组件复制进设计稿——复制件自带新 id、内部 ref 已展开，可独立渲染（只复制，不做联动编辑）',
+      'Project component library: look before you build. action=list lists reusable components (reusable nodes in __components.ptr); action=insert copies one into a design (fresh ids, internal refs expanded, standalone render; copy only, no live link); action=add registers a design subtree as a component (fresh ids, nested reusable stripped, optional rename).',
     inputSchema: {
-      action: z.enum(['list', 'insert']),
-      path: z.string().optional().describe('设计稿或项目目录；insert 时是目标设计稿'),
-      id: z.string().optional().describe('组件 id；insert 必填'),
+      action: z.enum(['list', 'insert', 'add']),
+      path: z.string().optional().describe('Design file or project directory; for insert this is the target design'),
+      id: z.string().optional().describe('Component id; required for insert'),
       parent: z.string().optional().describe("插到哪个父节点，默认 'root'"),
       index: z.number().int().min(0).optional(),
     },
@@ -542,8 +720,39 @@ export const TOOLS: Record<string, ToolDef> = {
       const from = resolve(optStr(a, 'path') ?? process.cwd());
       if (action === 'list') {
         const compPath = componentsPathFor(from);
-        if (compPath === null) return { ok: true, path: null, items: [] };
+        if (compPath === null) {
+          return {
+            ok: true,
+            path: null,
+            items: [],
+            hint: '项目还没有组件库：先 paintress_viewer 注册项目（会自动创建 __components.ptr）',
+          };
+        }
         return { ok: true, path: compPath, items: listComponents(compPath) };
+      }
+
+      if (action === 'add') {
+        const sourcePath = reqStr(a, 'path');
+        const sourceId = reqStr(a, 'id');
+        const loaded = loadDoc(sourcePath);
+        const expanded = expandRefs(applyProjectPresets(loaded.doc, sourcePath).doc, []);
+        const node = findNodeIn(expanded, sourceId);
+        if (node === null) throw new Error(`节点不存在：${sourceId}（先 paintress_query 拿 id）`);
+        const copy = structuredClone(node);
+        const name =
+          optStr(a, 'name') ?? (typeof copy['name'] === 'string' && copy['name'] !== '' ? copy['name'] : sourceId);
+        copy['name'] = name;
+        stripReusableDeep(copy);
+        copy['reusable'] = true;
+        const root = findProjectRoot(sourcePath) ?? dirname(resolve(sourcePath));
+        ensureProjectScaffold(root);
+        const compPath = join(root, COMPONENTS_FILE);
+        return write(compPath, (doc, mark) => {
+          remapIds(copy, new Set(collectIds(doc.children)));
+          const newId = i(doc, optStr(a, 'parent') ?? 'root', copy, optNum(a, 'index'));
+          mark([newId]);
+          return { id: newId, name, componentPath: compPath, source: sourceId };
+        });
       }
 
       const target = reqStr(a, 'path');
@@ -562,35 +771,65 @@ export const TOOLS: Record<string, ToolDef> = {
       // 复制出来的是实例，不是组件定义：整棵子树都摘掉 reusable。
       // 否则组件库里的嵌套组件（ref 展开后仍带 reusable:true）会被复制成新定义，
       // 下次 list 就在设计稿里看到一堆"伪组件"。
-      const stripReusable = (n: unknown): void => {
-        if (!n || typeof n !== 'object') return;
-        const rec = n as Record<string, unknown>;
-        delete rec['reusable'];
-        const kids = rec['children'];
-        if (Array.isArray(kids)) for (const k of kids) stripReusable(k);
-      };
-      stripReusable(copy);
+      stripReusableDeep(copy);
+      const componentName = typeof node['name'] === 'string' && node['name'] !== '' ? node['name'] : compId;
+      const existing = findNodesByName(loadDoc(target).doc.children, componentName);
 
       return write(target, (doc, mark) => {
         remapIds(copy, new Set(collectIds(doc.children)));
         const newId = i(doc, optStr(a, 'parent') ?? 'root', copy, optNum(a, 'index'));
         mark([newId]);
-        return { id: newId, from: compId, componentPath: compPath, warnings };
+        return {
+          id: newId,
+          from: compId,
+          componentPath: compPath,
+          warnings,
+          ...(existing.length > 0 ? { existing } : {}),
+        };
       });
     },
   },
 
   paintress_render: {
-    description: '渲染设计稿为 HTML 文件（每节点带 data-node-id）；返回输出路径与画布尺寸',
+    description:
+      'Render a design to an HTML file (each node carries data-node-id); returns the output path and canvas size. Project fonts are injected from the registry (web/css/file); embedFonts=true inlines file fonts as data URIs.',
     inputSchema: {
       path: z.string(),
-      out: z.string().describe('输出 .html 路径'),
+      out: z.string().describe('Output .html path'),
+      embedFonts: z.boolean().optional().describe('Inline file-source fonts as data URIs (default false)'),
     },
     run: (a) => {
       const out = reqStr(a, 'out');
       const path = reqStr(a, 'path');
       const loaded = loadDoc(path);
-      const r = renderDocument(applyProjectPresets(loaded.doc, path).doc);
+      const merged = applyProjectPresets(loaded.doc, path).doc;
+      const { registry } = projectFontRegistry(path);
+      const root = findProjectRoot(path) ?? dirname(resolve(path));
+      const embed = a['embedFonts'] === true;
+      const plan = planFonts(
+        registry,
+        (source) => {
+          if (source.target === undefined) return null;
+          const abs = resolve(root, source.target);
+          if (embed && source.kind === 'file') {
+            try {
+              const data = readFileSync(abs);
+              const ext = extname(abs).toLowerCase();
+              const mime =
+                ext === '.woff2' ? 'font/woff2' : ext === '.woff' ? 'font/woff' : ext === '.otf' ? 'font/otf' : 'font/ttf';
+              return `data:${mime};base64,${data.toString('base64')}`;
+            } catch {
+              return null;
+            }
+          }
+          return pathToFileURL(abs).href;
+        },
+        merged,
+      );
+      const r = renderDocument(merged, { fonts: plan });
+      if (embed && Object.values(registry.families).some((entry) => entry.source.kind === 'css')) {
+        r.warnings.push('css 来源的字体未内联（分片 CSS 的 url 无法安全重写）；导出件仍需能访问那些文件');
+      }
       writeFileSync(out, r.html, 'utf8');
       return { ok: true, out, canvas: r.canvas, warnings: r.warnings };
     },
@@ -598,12 +837,12 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_screenshot: {
     description:
-      '渲染并截图为 PNG；倍率 0.2–2，缺省 0.8（给 agent 自己审图：看得清又不至于太大）。单边超过 8192px 会等比压回。需要本机 Chromium/Chrome 或 PTR_BROWSER 指向的可执行文件。指定 board 时只截该画板（顶层 frame，即“一页”），而不是整张画布',
+      'Render and screenshot to PNG. Scale 0.2-2, default 0.8 (for agent review: legible without being huge); either edge over 8192px is scaled back proportionally. Needs local Chromium/Chrome or PTR_BROWSER. Pass board to capture one board (a top-level frame, i.e. one page) instead of the whole canvas.',
     inputSchema: {
       path: z.string(),
-      out: z.string().describe('输出 .png 路径'),
-      scale: z.number().min(0.2).max(2).optional().describe('像素倍率 0.2–2，默认 0.8；1x = 画板设计尺寸（查看器里的 1:1）'),
-      board: z.string().optional().describe('只截某个画板：id 或 name；模糊命中多个时会报错并列出候选'),
+      out: z.string().describe('Output .png path'),
+      scale: z.number().min(0.2).max(2).optional().describe('Pixel scale 0.2-2, default 0.8; 1x = board design pixels (the viewer 1:1)'),
+      board: z.string().optional().describe('Capture one board by id or name; an ambiguous name errors and lists candidates'),
     },
     run: async (a) => {
       const browser = findBrowser();
@@ -620,6 +859,7 @@ export const TOOLS: Record<string, ToolDef> = {
         ...(res.board !== undefined ? { board: res.board } : {}),
         scale: res.scale,
         browser: res.browser,
+        ...(res.fonts !== undefined ? { fonts: res.fonts } : {}),
         warnings: res.warnings,
       };
     },
@@ -627,10 +867,10 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_marks: {
     description:
-      '读取/清空当前会话的节点标记：用户在浏览器里点击的节点会分配短号 #1 #2…，返回短号 → 节点 id 映射，便于对话中指代（如“#1 改成蓝色”）',
+      'Read or clear the node marks for this session: clicking a node in the viewer assigns #1 #2...; returns the #N -> node id mapping so the conversation can refer to it (e.g. "make #1 blue").',
     inputSchema: {
-      project: z.string().optional().describe('项目名；缺省返回全部项目的标记'),
-      action: z.enum(['list', 'clear']).optional().describe('默认 list'),
+      project: z.string().optional().describe('Project name; omit to return marks from all projects'),
+      action: z.enum(['list', 'clear']).optional().describe('Default: list'),
     },
     run: async (a) => {
       if (!isDaemonRunning()) {

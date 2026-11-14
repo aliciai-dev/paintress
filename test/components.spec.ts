@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -140,5 +140,59 @@ describe('复制插入', () => {
     expect(() => TOOLS['paintress_component']!.run({ action: 'insert', path: design, id: 'nope' })).toThrow(
       /组件不存在：nope/,
     );
+  });
+
+  it('insert 到已有同名节点 → existing 提示（不静默重复造轮子）', async () => {
+    writeComponents();
+    const res = (await TOOLS['paintress_component']!.run({
+      action: 'insert',
+      path: design,
+      id: 'cmp-card',
+    })) as { result: { existing?: { id: string; name: string }[] } };
+    expect(res.result.existing?.some((e) => e.name === 'Card')).toBe(true);
+  });
+});
+
+describe('上收为组件（add）', () => {
+  it('设计稿子树 → 组件库：新 id、根 reusable、内部 reusable 摘掉、源文件不变', async () => {
+    const source = join(root, 'promote.ptr');
+    writeFileSync(
+      source,
+      JSON.stringify({
+        version: '2.22',
+        fileToken: '00000000-0000-4000-8000-0000000000aa',
+        variables: {},
+        children: [
+          {
+            type: 'frame',
+            id: 'promo',
+            name: 'Promo',
+            width: 200,
+            height: 100,
+            children: [
+              { type: 'frame', id: 'promo-inner', name: 'Inner', reusable: true, width: 40, height: 40 },
+            ],
+          },
+        ],
+      }),
+    );
+    const before = readFileSync(source, 'utf8');
+    const res = (await TOOLS['paintress_component']!.run({
+      action: 'add',
+      path: source,
+      id: 'promo',
+      name: 'Promo / Card',
+    })) as { result: { id: string; name: string; componentPath: string } };
+    expect(res.result.name).toBe('Promo / Card');
+    expect(res.result.componentPath).toBe(components);
+    expect(listComponents(components).some((c) => c.id === res.result.id && c.name === 'Promo / Card')).toBe(true);
+
+    const compDoc = loadDoc(components).doc;
+    const added = compDoc.children.find((c) => (c as Record<string, unknown>)['id'] === res.result.id) as Record<string, unknown>;
+    expect(added['reusable']).toBe(true);
+    const inner = (added['children'] as Record<string, unknown>[])[0];
+    expect(inner?.['reusable']).toBeUndefined();
+    // 源设计稿不动（复制，不是移动）
+    expect(readFileSync(source, 'utf8')).toBe(before);
   });
 });

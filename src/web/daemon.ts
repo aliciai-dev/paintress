@@ -30,10 +30,12 @@ import {
   notePathFor,
   listPresetGroups,
   presetPathFor,
+  projectFontRegistry,
   readTextIfExists,
   setPreset,
   type PresetType,
 } from '../doc/project.js';
+import { planFonts } from '../doc/fonts.js';
 
 
 const DEFAULT_PORT = 3316;
@@ -60,6 +62,17 @@ const MIME: Record<string, string> = {
 
 function mimeOf(filePath: string): string {
   return MIME[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+}
+
+/** 项目内资源 → /files URL（项目名可能带斜杠，按段编码） */
+function filesUrl(project: string, relPath: string): string {
+  const projectPart = project.split('/').map(encodeURIComponent).join('/');
+  const filePart = relPath
+    .split('/')
+    .filter((seg) => seg !== '')
+    .map(encodeURIComponent)
+    .join('/');
+  return `/files/${projectPart}/${filePart}`;
 }
 
 /** 定位前端产物目录：源码运行 / 构建后 / cwd 三种候选，找不到则回退精简视图 */
@@ -961,7 +974,17 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         }
         const loaded = loadDoc(abs);
         // 项目预设：设计稿里只写 $key，值在 __preset.ptr 里存一份
-        const rendered = renderDocument(applyProjectPresets(loaded.doc, abs).doc, { title: relPath });
+        const merged = applyProjectPresets(loaded.doc, abs).doc;
+        const { registry: fontRegistry } = projectFontRegistry(abs);
+        const fontPlan = planFonts(fontRegistry, (source) =>
+          source.target === undefined ? null : filesUrl(entry.name, source.target),
+        );
+        const rendered = renderDocument(merged, {
+          title: relPath,
+          fonts: fontPlan,
+          // 只有 iframe 嵌入时才有父页面接收字体探针
+          probeFonts: url.searchParams.get('embed') === '1',
+        });
         // base href 让图像填充等相对资源解析到 /files/<project>/<dir>/
         const dir = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/') + 1) : '';
         const baseHref = `/files/${entry.name.split('/').map(encodeURIComponent).join('/')}/${dir
@@ -1000,9 +1023,15 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           return;
         }
         // SAFETY: node 取自同一份已过 schema 校验的 doc 树，单节点文档与整份文档同构
-        const rendered = renderDocument({ ...doc, children: [node] } as unknown as PenDocument, {
+        const single = { ...doc, children: [node] } as unknown as PenDocument;
+        const { registry: fontRegistry } = projectFontRegistry(compPath);
+        const fontPlan = planFonts(fontRegistry, (source) =>
+          source.target === undefined ? null : filesUrl(entry.name, source.target),
+        );
+        const rendered = renderDocument(single, {
           title: id,
           transparent: true,
+          fonts: fontPlan,
         });
         send(200, rendered.html);
         return;
@@ -1022,8 +1051,26 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           send(404, 'file not found', 'text/plain; charset=utf-8');
           return;
         }
+        const ext = extname(abs).toLowerCase();
+        const isFont = ext === '.woff' || ext === '.woff2' || ext === '.ttf' || ext === '.otf';
+        if (isFont) {
+          // 只为防一次请求把内存打爆，不评判项目该放多大字体
+          try {
+            if (statSync(abs).size > 32 * 1024 * 1024) {
+              sendJson(413, { ok: false, error: '字体文件超过 32 MB，拒绝加载' });
+              return;
+            }
+          } catch {
+            sendJson(404, { ok: false, error: 'file not found' });
+            return;
+          }
+        }
         const buf = await readFile(abs);
-        res.writeHead(200, { 'content-type': mimeOf(abs), 'cache-control': 'no-cache' });
+        res.writeHead(200, {
+          'content-type': mimeOf(abs),
+          // 字体分片很多（raybend 有 105 个），不做长缓存会每次刷新重取
+          'cache-control': isFont ? 'public, max-age=31536000, immutable' : 'no-cache',
+        });
         res.end(buf);
         return;
       }
