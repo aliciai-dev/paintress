@@ -5,6 +5,8 @@ import {
   closeSync, existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Registry, type ProjectEntry } from './registry.js';
@@ -15,6 +17,7 @@ import { lockPath, pidPath, safeJoin, socketPath } from './paths.js';
 import { WatchManager } from './watcher.js';
 import { VersionChecker } from './update-check.js';
 import { loadDoc, renderDocument } from '../index.js';
+import { findBrowser, screenshotPen } from '../shot/screenshot.js';
 import type { PenDocument } from '../schema/index.js';
 import {
   applyProjectPresets,
@@ -601,6 +604,63 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           const set = changes.get(qProject, qFile);
           sendJson(200, { ok: true, ids: set?.ids ?? [], at: set?.at ?? 0 });
           return;
+        }
+        // ---------- 单帧导出（画板 → PNG，2x/1x/0.5x；8192 单边上限等比压回）----------
+        if (segments[1] === 'export' && req.method === 'GET') {
+          const qProject = url.searchParams.get('project') ?? '';
+          const qFile = url.searchParams.get('path') ?? '';
+          const qBoard = url.searchParams.get('board') ?? '';
+          const qScale = Number(url.searchParams.get('scale') ?? '1');
+          if (qProject === '' || qFile === '' || qBoard === '') {
+            sendJson(400, { ok: false, error: '缺少 project / path / board' });
+            return;
+          }
+          if (qScale !== 0.5 && qScale !== 1 && qScale !== 2) {
+            sendJson(400, { ok: false, error: 'scale 只支持 0.5 / 1 / 2' });
+            return;
+          }
+          const entry = registry.get(qProject);
+          if (!entry) {
+            sendJson(404, { ok: false, error: `未注册的项目：${qProject}` });
+            return;
+          }
+          const abs = safeJoin(entry.rootReal, qFile);
+          if (!abs) {
+            sendJson(400, { ok: false, error: `路径不在项目内：${qFile}` });
+            return;
+          }
+          if (findBrowser() === null) {
+            sendJson(501, { ok: false, error: '本机没有 Chromium/Chrome，无法导出 PNG（可用 PTR_BROWSER 指定）' });
+            return;
+          }
+          const tmpPng = join(tmpdir(), `paintress-export-${randomUUID()}.png`);
+          try {
+            const shot = await screenshotPen(abs, tmpPng, { board: qBoard, scale: qScale });
+            const buf = await readFile(tmpPng);
+            // 文件名：稿名 + 画板名（缺省用 id）+ 倍率；中文用 RFC 5987 给一份 utf-8 变体
+            const base = qFile.split('/').pop() ?? qFile;
+            const stem = base.replace(/\.[^.]+$/, '');
+            const label = shot.board?.name !== undefined && shot.board.name !== '' ? shot.board.name : (shot.board?.id ?? qBoard);
+            const raw = `${stem}-${label}@${qScale}x.png`;
+            const ascii = raw.replace(/[^A-Za-z0-9._@-]+/g, '_');
+            res.writeHead(200, {
+              'content-type': 'image/png',
+              'content-disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(raw)}`,
+              'cache-control': 'no-store',
+              'x-paintress-scale': String(shot.scale),
+            });
+            res.end(buf);
+            return;
+          } catch (cause) {
+            sendJson(400, { ok: false, error: cause instanceof Error ? cause.message : String(cause) });
+            return;
+          } finally {
+            try {
+              unlinkSync(tmpPng);
+            } catch {
+              /* 没生成就算了 */
+            }
+          }
         }
         // ---------- 单节点读取（查看器只读属性面板）----------
         if (segments[1] === 'node' && req.method === 'GET') {

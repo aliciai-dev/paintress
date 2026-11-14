@@ -1085,6 +1085,96 @@ a.ghost {
   font-size: 11.5px;
 }
 
+/* ---------- 多稿快速切换（Ctrl/Cmd+K） ---------- */
+/* 与确认框同一个壳；列表高度受限 + 选中行用面板底色，保持和侧栏列表同一套手感。 */
+.quick-switch-modal {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.qs-input {
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.qs-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.qs-list {
+  list-style: none;
+  max-height: 300px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.qs-item {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.qs-item.active {
+  background: var(--accent-soft);
+}
+
+.qs-item.current .qs-name {
+  font-weight: 650;
+}
+
+.qs-dir {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.qs-name {
+  overflow-wrap: anywhere;
+}
+
+.qs-empty {
+  padding: 10px 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.qs-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ---------- 单帧导出控件（画板条右侧，只在选中具体画板时出现） ---------- */
+.boardbar-export {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 10px;
+  flex: 0 0 auto;
+}
+
+.export-scale {
+  padding: 2px 6px;
+}
+
 .panel-hint {
   color: var(--muted);
   font-size: 12px;

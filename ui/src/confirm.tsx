@@ -17,6 +17,8 @@ export interface ModalProps {
   onClose: () => void;
   /** 打开后要聚焦的元素（缺省聚焦第一个按钮） */
   initialFocus?: () => HTMLElement | undefined;
+  /** 额外类名：让不同用途的弹窗（确认 / 快速切换）共用壳但各有尺寸 */
+  class?: string;
 }
 
 export function Modal(props: ModalProps) {
@@ -44,7 +46,13 @@ export function Modal(props: ModalProps) {
           if (ev.target === ev.currentTarget) props.onClose();
         }}
       >
-        <div class="modal" role="dialog" aria-modal="true" aria-label={props.title} onKeyDown={onKeyDown}>
+        <div
+          class={`modal${props.class !== undefined && props.class !== '' ? ` ${props.class}` : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={props.title}
+          onKeyDown={onKeyDown}
+        >
           <h3>{props.title}</h3>
           {props.children}
           <Show when={props.actions}>

@@ -88,6 +88,12 @@ export function renderUrl(project: string, file: string): string {
   return `/render/${encodeURIComponent(project)}/${file.split('/').map(encodeURIComponent).join('/')}?embed=1`;
 }
 
+/** 单帧导出地址：画板 → PNG（scale 只认 0.5 / 1 / 2） */
+export function exportUrl(project: string, file: string, board: string, scale: number): string {
+  const qs = new URLSearchParams({ project, path: file, board, scale: String(scale) });
+  return `/api/export?${qs.toString()}`;
+}
+
 /** SSE 地址：文件变更推送 */
 export function eventsUrl(project: string, file: string): string {
   return `/events?project=${encodeURIComponent(project)}&path=${encodeURIComponent(file)}`;

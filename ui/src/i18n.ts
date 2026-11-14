@@ -49,6 +49,14 @@ export interface Messages {
   versionTitle: string;
   /** 项目行上的 agent 在线指示灯悬停文案 */
   agentOnline: string;
+  /** 单帧导出 */
+  exportFrame: string;
+  exportScale: string;
+  /** 多稿快速切换 */
+  quickSwitch: string;
+  quickSwitchPlaceholder: string;
+  quickSwitchEmpty: string;
+  quickSwitchHint: string;
   /** 只读属性面板 */
   inspector: string;
   inspectorEmpty: string;
@@ -132,6 +140,12 @@ const MESSAGES: Record<Lang, Messages> = {
     close: '关闭',
     versionTitle: '版本',
     agentOnline: 'agent 已接入',
+    exportFrame: '导出 PNG',
+    exportScale: '倍率',
+    quickSwitch: '切换设计稿',
+    quickSwitchPlaceholder: '输入文件名过滤…',
+    quickSwitchEmpty: '没有匹配的设计稿',
+    quickSwitchHint: '↑↓ 选择 · Enter 打开 · Esc 关闭',
     inspector: '属性',
     inspectorEmpty: '选中画布里的一个节点，这里显示它的属性。',
     inspectorGroups: {
@@ -205,6 +219,12 @@ const MESSAGES: Record<Lang, Messages> = {
     close: 'Close',
     versionTitle: 'Version',
     agentOnline: 'Agent attached',
+    exportFrame: 'Export PNG',
+    exportScale: 'Scale',
+    quickSwitch: 'Switch file',
+    quickSwitchPlaceholder: 'Type to filter files…',
+    quickSwitchEmpty: 'No matching design files',
+    quickSwitchHint: '↑↓ choose · Enter open · Esc close',
     inspector: 'Properties',
     inspectorEmpty: 'Select a node on the canvas to see its properties.',
     inspectorGroups: {

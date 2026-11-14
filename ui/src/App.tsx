@@ -9,6 +9,7 @@ import {
   fetchComponents,
   fetchMarks,
   fetchNode,
+  exportUrl,
   fetchNotes,
   fetchPresets,
   fetchProjects,
@@ -41,6 +42,7 @@ import { PresetPanel } from './preset-panel';
 import { ComponentGallery } from './component-gallery';
 import { ToolRail, type RailItem } from './tool-rail';
 import { InspectorPanel } from './inspector-panel';
+import { QuickSwitch } from './quick-switch';
 
 interface Board {
   id: string;
@@ -64,6 +66,25 @@ interface ProjectRow extends ProjectInfo {
 
 /** 需要二次确认的破坏性动作（两者都不能手滑就执行） */
 type PendingAction = { kind: 'unwatch'; name: string } | { kind: 'shutdown' };
+
+/** 导出倍率的记忆（浏览器级）：只认三档，坏值回落到 1x */
+function initialExportScale(): number {
+  try {
+    const raw = localStorage.getItem('paintress:export-scale');
+    const n = raw === null ? 1 : Number(raw);
+    return n === 2 || n === 1 || n === 0.5 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function rememberExportScale(scale: number): void {
+  try {
+    localStorage.setItem('paintress:export-scale', String(scale));
+  } catch {
+    /* 隐私模式写不进就算了 */
+  }
+}
 
 /** 关窗倒计时秒数。daemon 侧 emptyBrowserMs 默认 30s 兜底，10s 留足了余量 */
 const LEAVE_SECONDS = 10;
@@ -120,6 +141,10 @@ export default function App() {
   const [lang, setLang] = createSignal<Lang>(initialLang());
   const [canvasBg, setCanvasBg] = createSignal<CanvasBackground>(initialCanvasBackground());
   const [pending, setPending] = createSignal<PendingAction | null>(null);
+  /** 多稿快速切换（Ctrl/Cmd+K） */
+  const [switcherOpen, setSwitcherOpen] = createSignal(false);
+  /** 单帧导出倍率：只有 2x / 1x / 0.5x 三档（1x = 查看器里的 1:1） */
+  const [exportScale, setExportScale] = createSignal<number>(initialExportScale());
   const [closed, setClosed] = createSignal(false);
   /** 笔记抽屉（占布局，画布左侧）与右上浮动面板（预设 / 组件，互斥） */
   const [notesOpen, setNotesOpen] = createSignal(false);
@@ -516,6 +541,14 @@ export default function App() {
     };
     const onKey = (ev: KeyboardEvent): void => {
       if (isTyping(ev)) return;
+      // Ctrl/Cmd+K：快速切换设计稿（输入框里不拦，见 specs/viewer-file-switcher.md）
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k') {
+        if (activeProject() !== null) {
+          ev.preventDefault();
+          setSwitcherOpen(true);
+        }
+        return;
+      }
       if (ev.key === 'Escape') {
         if (panel() !== null) {
           setPanel(null);
@@ -821,6 +854,7 @@ export default function App() {
   function bindFrame(): void {
     const doc = frameDoc();
     if (!doc) return;
+    frameReady = true;
     ensureFrameStyle();
     applyCanvasBg();
     viewportCtl?.destroy();
@@ -849,6 +883,15 @@ export default function App() {
     const parsed = stored === null ? null : parseViewport(stored);
     if (parsed !== null) viewportCtl.set(parsed);
     else viewportCtl.fitAll();
+  }
+
+  /** 单帧导出：走浏览器原生下载（Content-Disposition），不把 PNG 读进内存 */
+  function downloadFrame(): void {
+    const project = activeProject();
+    const file = activeFile();
+    const board = activeBoard();
+    if (project === null || file === null || board === null) return;
+    window.location.href = exportUrl(project, file, board, exportScale());
   }
 
   function focusBoard(id: string | null): void {
@@ -974,11 +1017,35 @@ export default function App() {
   });
 
   // ---------- 预览地址与热重载 ----------
+  /**
+   * iframe 首次用 src 属性装载；之后换稿 / 重渲染一律走 location.replace。
+   * 改 src 会给标签新增一条浏览历史，而「单历史」正是页面能自己关窗的前提（D-009）——
+   * 换一次稿就把自动关窗弄坏，代价太大。
+   */
+  let frameReady = false;
+  function navigateFrame(url: string): void {
+    if (url === '' || !frameReady) {
+      setIframeSrc(url);
+      if (url === '') frameReady = false;
+      return;
+    }
+    const win = frameEl?.contentWindow;
+    if (win === null || win === undefined) {
+      setIframeSrc(url);
+      return;
+    }
+    try {
+      win.location.replace(url);
+    } catch {
+      setIframeSrc(url);
+    }
+  }
+
   createEffect(
     on([activeProject, activeFile, reloadKey], () => {
       const p = activeProject();
       const f = activeFile();
-      setIframeSrc(p && f ? `${renderUrl(p, f)}&r=${reloadKey()}` : '');
+      navigateFrame(p !== null && f !== null ? `${renderUrl(p, f)}&r=${reloadKey()}` : '');
       applyCanvasBg();
     }),
   );
@@ -1166,6 +1233,13 @@ export default function App() {
           </div>
           <div class="tools">
             <Show when={activeProject() !== null && activeFile() !== null}>
+              <button
+                class="ghost tiny qs-trigger"
+                title={`${m().quickSwitch}（Ctrl/Cmd+K）`}
+                onClick={() => setSwitcherOpen(true)}
+              >
+                {m().quickSwitch}
+              </button>
               <span class="hint zoom">{Math.round(zoom() * 100)}%</span>
               <button class="ghost tiny" title={m().fitTitle} onClick={() => viewportCtl?.fitAll()}>
                 {m().fit}
@@ -1227,6 +1301,28 @@ export default function App() {
                 )}
                 </For>
               </div>
+              <Show when={activeBoard() !== null}>
+                <div class="boardbar-export">
+                  <span class="hint">{m().exportScale}</span>
+                  <select
+                    class="ghost tiny export-scale"
+                    aria-label={m().exportScale}
+                    value={String(exportScale())}
+                    onChange={(ev) => {
+                      const next = Number(ev.currentTarget.value);
+                      setExportScale(next);
+                      rememberExportScale(next);
+                    }}
+                  >
+                    <option value="0.5">0.5x</option>
+                    <option value="1">1x</option>
+                    <option value="2">2x</option>
+                  </select>
+                  <button class="ghost tiny" onClick={() => downloadFrame()}>
+                    {m().exportFrame}
+                  </button>
+                </div>
+              </Show>
             </div>
           </Show>
           <div class="canvas-row">
@@ -1311,6 +1407,23 @@ export default function App() {
           </div>
         </Show>
       </main>
+
+      <QuickSwitch
+        open={switcherOpen()}
+        files={files()}
+        current={activeFile()}
+        labels={{
+          title: m().quickSwitch,
+          placeholder: m().quickSwitchPlaceholder,
+          empty: m().quickSwitchEmpty,
+          hint: m().quickSwitchHint,
+        }}
+        onPick={(file) => {
+          setSwitcherOpen(false);
+          openFile(file);
+        }}
+        onClose={() => setSwitcherOpen(false)}
+      />
 
       <Confirm
         open={pending() !== null}

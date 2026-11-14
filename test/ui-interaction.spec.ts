@@ -33,6 +33,10 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'paintress-ui-proj-'));
   copyFileSync(join(import.meta.dirname, 'fixtures/basic.pen'), join(dir, 'design.ptr'));
   writeFileSync(join(dir, 'design.md'), '# 设计说明\n\n这一版把**主色**压暗了一档。\n\n- 待定：图标\n');
+  // 快速切换要至少两份设计稿
+  copyFileSync(join(import.meta.dirname, 'fixtures/basic.pen'), join(dir, 'second.ptr'));
+  // 多画板稿：画板条与单帧导出控件
+  copyFileSync(join(import.meta.dirname, 'fixtures/boards.pen'), join(dir, 'boards.ptr'));
   daemon = await startDaemon({ port: 0, idleTimeoutMs: 10 * 60_000, idleCheckMs: 5_000, quiet: true });
   await sendRequest({ kind: 'watch', project: PROJECT, dir });
   setPreset(dir, { key: 'color-brand', type: 'color', value: '#3B82F6', name: '主色' });
@@ -136,6 +140,62 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       // 点空白：选中清空、面板收起
       await page.frameLocator('.preview').locator('body').click({ position: { x: 2, y: 2 } });
       await page.waitForSelector('.inspector-panel', { state: 'detached' });
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('快速切换：Ctrl+K 过滤 + Enter 打开，不新增浏览历史', async () => {
+    const page = await openViewer();
+    try {
+      const before = await page.evaluate(() => (globalThis as any).history.length as number);
+      await page.keyboard.press('Control+k');
+      await page.waitForSelector('.qs-input');
+      await page.locator('.qs-input').fill('second');
+      await page.locator('.qs-input').press('Enter');
+      await page.waitForSelector('.qs-list', { state: 'detached' });
+      expect(page.url()).toContain('second.ptr');
+      // 单历史标签才允许页面自己关窗：切换不能 push 历史
+      expect(await page.evaluate(() => (globalThis as any).history.length as number)).toBe(before);
+      // 侧栏选中态跟着走
+      expect(await page.locator('.files .item.active').innerText()).toContain('second.ptr');
+
+      // Esc 关掉，不切换
+      await page.keyboard.press('Control+k');
+      await page.waitForSelector('.qs-input');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.qs-list', { state: 'detached' });
+      expect(page.url()).toContain('second.ptr');
+
+      // 无匹配时给空态，Enter 不误开
+      await page.keyboard.press('Control+k');
+      await page.locator('.qs-input').fill('zzzz');
+      await page.waitForSelector('.qs-empty');
+      await page.locator('.qs-input').press('Enter');
+      expect(page.url()).toContain('second.ptr');
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('单帧导出：选中具体画板才出现倍率与导出按钮', async () => {
+    if (browser === undefined) throw new Error('浏览器未就绪');
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+    try {
+      await page.goto(`http://127.0.0.1:${daemon.port}/${PROJECT}?file=boards.ptr`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.boardbar');
+      // 「全部」选中时不出导出控件（导出的是某一帧，不是整张画布）
+      expect(await page.locator('.boardbar-export').count()).toBe(0);
+      await page.locator('.boardbar .board').nth(1).click();
+      await page.waitForSelector('.boardbar-export');
+      const scale = page.locator('.boardbar-export select');
+      expect(await scale.inputValue()).toBe('1');
+      expect(await scale.locator('option').count()).toBe(3); // 0.5 / 1 / 2
+      await scale.selectOption('2');
+      expect(await page.evaluate(() => (globalThis as any).localStorage.getItem('paintress:export-scale'))).toBe('2');
+      // 回到「全部」→ 控件收起
+      await page.locator('.boardbar .board').nth(0).click();
+      await page.waitForSelector('.boardbar-export', { state: 'detached' });
     } finally {
       await page.close();
     }
