@@ -1,5 +1,9 @@
 # 监听端口阶梯（WSL 宿主访问不了 → 自动换端口/换绑定）
 
+- 状态：**全部实现**（2026-11-15）；记录见 `.agents/implementations/2026-11-15_0412_6033-wsl-0-0-0-0-agent.md`、`2026-11-15_0426_review-startup-reuse-diagnostics.md`。
+- 基线：双端 `tsc` 0 错误、32 文件 417 用例全绿、`pnpm build` 通过（2026-11-15）。
+- 决策：`.agents/memory/ARCHITECTURE.md#D-012`；已实证的本机根因（Hyper-V 保留段落到 3316）见 §现场与根因。
+
 ## 需求
 
 operator 2026-11-15：**「paintress web 开启后 host 浏览器打不开」**，并且要求把这类失败做成闭环：

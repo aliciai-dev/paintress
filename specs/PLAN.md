@@ -65,6 +65,15 @@
 **2026-11-15 收口：D0–D6、F1–F5 全部落地**（双端 `tsc` 0 错误、30 文件 397 用例全绿、`pnpm build` 通过）。
 D4 的 seed 现在包含字体登记；D5 的提示词已含字体决策树。摘要见 `FINISHED.md`，决策见 `ARCHITECTURE.md#D-011`。
 
+## 补丁批次（2026-11-15）：查看器端口阶梯
+
+| 序 | 单元 | 规格 | 出口（验收摘要） |
+| --- | --- | --- | --- |
+| P1 | 默认端口 6033 + WSL 宿主可达性判据 + 端口阶梯 | `specs/web-bind-ladder.md` | 宿主连不上就跳 6133/6233，再落 `0.0.0.0`；最终地址随 MCP/CLI 报给 agent |
+
+**2026-11-15 收口：P1 已实现**（双端 `tsc` 0 错误、32 文件 417 用例全绿、`pnpm build` 通过）。
+摘要见 `.agents/memory/FINISHED.md`；决策见 `.agents/memory/ARCHITECTURE.md#D-012`。
+
 ## 未决问题
 
 - **dts 生成被禁用（债务）**：zod passthrough 推断类型超过 TS 序列化上限（TS7056，实测定位在 `src/schema/nodes.ts:209` 的 `NodeSchema`）。2026-11-11 实验：只给 `NodeSchema` 加显式注解即可通过构建，但 `index.d.ts` 达 1548 KB（包体从 164 KB → 1.67 MB），故 0.1.0 不发类型产物；要发需先给全部导出 schema 显式注解瘦身，或按需导出 + api-extractor。

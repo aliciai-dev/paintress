@@ -76,6 +76,9 @@
 | --- | --- | --- | --- |
 | VS Code `mcp.json` 的 JSONC | `install` 用严格 JSON 解析，带注释的配置判 invalid 后跳过 | 正确做法是 jsonc-parser 定点插入（重新序列化会丢注释），属行为变更 | 有因注释配置接入失败的反馈；或新增第 6 家客户端 |
 | Windows `.cmd` 垫片判定 | win32 上 PATH 里有 `paintress.cmd` 就当作自己，不校验它指向哪个包 | 仓库 CI 只有 Linux，Windows 未实测 | 宣布支持 Windows；或出现「写到配置里的裸命令指向别的包」的报告 |
+| WSL 宿主转发不可见时的 `0.0.0.0` 兜底 | 兜底绑全接口，局域网内也能打开查看器（没有鉴权） | 本地看图工具的既有立场是不做 Origin 白名单/鉴权（`src/web/daemon.ts` 注释），要加得先定通道（一次性 token 或 Host 白名单） | 查看器在不可信网络里被使用；或有人把 `--bind all` 当成默认 |
+| interop 不可用时的宿主可达性 | `WSLInterop` 未注册或 `/mnt/c` 不可用时只能报 `windows: unavailable`（未验证） | 唯一真相是「从宿主发一个请求」，没有 interop 就没有执行通道 | 出现「interop 被策略禁用但仍需保证宿主可访问」的环境 |
+| 运行中端口状态漂移 | 阶梯只在启动时评估；daemon 常驻数小时后宿主侧保留段/转发变化不会被发现 | 需要周期探测 + 主动迁移已开页面，成本与收益不匹配 | 出现「跑一段时间后宿主连不上」的真实报告 |
 | Codex 陈旧路径 | 已有 `[mcp_servers.paintress]` 一律 noop，命令过期也不修 | 改 TOML 要引解析器并重写 section，风险高于 JSON 合并 | 用户报告 Codex 走旧路径；或 install 需要「更新已有条目」语义 |
 
 ### 发布与工具链
@@ -83,6 +86,7 @@
 | 条目 | 是什么 | 为什么等 | 触发条件 |
 | --- | --- | --- | --- |
 | `dts` 生成 | 发类型产物 | `NodeSchema` 的 zod 推断超 TS7056；硬注解后 `index.d.ts` 1548 KB（包体 164 KB → 1.67 MB） | 要么全量显式注解瘦身，要么按需导出 + api-extractor；出现「要写 TS 消费方」的需求 |
+| tsdown `define` 警告 | `pnpm build` 打出 `Invalid input options … "define"`，产物与自检正常 | 属构建配置与 tsdown 版本兼容，非端口梯次改动引入；先记录不动 | tsdown 升级时一并核对；或构建输出开始真正异常 |
 | Vitest → `node:test` | 换测试运行时 | 项目只用 `describe`/`it`/`expect`，迁移约半天；纯偏好 | operator 认为依赖体积/供应链复杂度是问题时 |
 
 ## 已否决

@@ -233,3 +233,13 @@
 - 新增 `paintress_convert`（MCP + CLI）：`.pen` → `.ptr`，新 fileToken，源文件不动。
 - 质量基线：双端 `tsc` 0 错误、30 文件 397 用例全绿。
 - 证据：`.agents/implementations/2026-11-15_0224_font-review-fixes.md`。
+
+### 查看器端口阶梯：默认 6033 + WSL 宿主可达性闭环（2026-11-15）
+
+- 现场：`paintress web` 在 WSL 内自测 200，宿主浏览器「连接失败」——Windows 保留段 `3228–3327` 含 3316，`wslrelay` 绑不上就不建转发；这类失败在发行版内部完全不可见。
+- 默认端口 3316 → **6033**。启动顺序固定为「宿主体检（保留段 + 独占可绑）→ 真正 listen → 端到端 nonce 复核」；候选 `127.0.0.1 × [6033,6133,6233]` → `0.0.0.0 × 同三端口`，六选一，本机占用/宿主保留段/宿主占用/转发不通一律换下一个。
+- 显式 `--port` 不跳级（被占即报错）；`--bind auto|loopback|all` 钉死绑定面；`port: 0` 跳过宿主校验。
+- `access{url,host,bind,windows,jumped,attempts}` 随 `pong` 上报，贯穿 `paintress_viewer`（含 `note`）/ `paintress web` / `paintress doctor`（新增 `net` 段）；旧版 daemon 不回该字段时按本机 loopback 兜底。
+- 审查补齐：后台启动保留失败明细、并发启动复用胜者且不重复弹窗、`--bind` 冲突不再静默、all 模式无网卡地址不假成功、跳级后精简页显示实际端口；`open-browser` 真正复用 `shared/wsl.ts` 的 `isWsl`。
+- 质量基线：双端 `tsc` 0 错误、**32 文件 417 用例全绿**、`pnpm build` 通过。
+- 证据：`specs/web-bind-ladder.md`；`.agents/implementations/2026-11-15_0412_6033-wsl-0-0-0-0-agent.md`、`2026-11-15_0426_review-startup-reuse-diagnostics.md`；决策 `ARCHITECTURE.md#D-012`。

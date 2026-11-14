@@ -136,6 +136,7 @@ agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在�
 | `PAINTRESS_NO_OPEN` | `1` 时不打开浏览器窗口 |
 | `PAINTRESS_NO_AUTO_WEB` | `1` 时 MCP 写操作前不再确保查看器在跑 |
 | `PAINTRESS_NO_WEB_FONTS` | `1` 时跳过内置网络字体（离线 / CI） |
+| `PAINTRESS_PORT` | `ui/` 开发服务器的代理目标端口（默认 `6033`）；端口阶梯跳级时设成查看器实际端口 |
 | `CI` | `true` 等价于 `PAINTRESS_NO_OPEN` |
 
 ## MCP 客户端

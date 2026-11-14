@@ -140,6 +140,7 @@ One source of truth per project, so a change lands everywhere instead of on one 
 | `PAINTRESS_NO_OPEN` | `1` never opens a browser window |
 | `PAINTRESS_NO_AUTO_WEB` | `1` stops the MCP server from ensuring the viewer before writes |
 | `PAINTRESS_NO_WEB_FONTS` | `1` skips the built-in web fonts (offline / CI) |
+| `PAINTRESS_PORT` | Port the `ui/` vite dev server proxies to (default `6033`); set it to the viewer's actual port when the port ladder jumped |
 | `CI` | `true` behaves like `PAINTRESS_NO_OPEN` |
 
 ## MCP clients
