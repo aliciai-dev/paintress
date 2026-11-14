@@ -18,10 +18,21 @@ The agent does the reading and writing, through MCP tools or the CLI. The browse
 
 | Part | Purpose |
 | --- | --- |
-| MCP tools | ensure the viewer, create, query, read, update, insert, delete, move, batch, validate, render, screenshot, audit / establish / adjust the design system |
+| MCP tools | paintress_viewer, paintress_new, paintress_doc_info, paintress_query, paintress_get, paintress_update, paintress_insert, paintress_delete, paintress_move, paintress_batch, paintress_validate, paintress_preset, paintress_font, paintress_audit, paintress_establish, paintress_adjust, paintress_component, paintress_render, paintress_screenshot, paintress_marks |
 | CLI | the same operations plus the viewer process, for use without an agent |
 | Viewer | local web server: renders a document, highlights changes, hands back clicked nodes as `#1`, `#2`, … |
 | Screenshot | PNG of a canvas or one board; scale 0.2–2 (default 0.8), either edge capped to 8192px |
+
+## Files and formats
+
+New files are `.ptr` — paintress's own flavor of the same JSON design document. Existing `.pen` files open, edit and render unchanged; only the extension differs.
+
+Two project-level files keep a project consistent. They are created automatically when the project is registered, and they belong in version control next to the designs:
+
+| File | Holds |
+| --- | --- |
+| `__preset.ptr` | design tokens (colors, radii, spacing, font sizes, font families), preset groups and the font registry |
+| `__components.ptr` | reusable components (nodes marked `reusable`) |
 
 ## Requirements
 
@@ -59,7 +70,9 @@ paintress delete <file> <id>                            remove a node
 paintress move <file> <id> <parent> [--index n]         reparent a node
 paintress batch <file> '<ops-json>'                     several operations at once
 paintress validate <file>                               check against the format spec
-paintress preset list|set|remove|set-group|remove-group ... project tokens and preset groups
+paintress preset list|set|remove|seed|set-group|remove-group ...
+                                                           tokens, groups and the starter scale
+paintress font list|add|remove|default ...                project font registry
 paintress audit <file>                               read-only design-system audit
 paintress establish <file> [--apply]                propose tokens / preset groups (dry-run by default)
 paintress adjust <file> --key k --value v [--apply] preview or apply a design-system adjustment
@@ -69,7 +82,7 @@ paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  render to PN
 
 paintress web [--port n] [--idle ms] [--foreground]   ensure the viewer is running (idempotent, returns at once)
 paintress ping | status | stop                          viewer control
-paintress watch <name> <dir> | unwatch <name>           register a directory to browse
+paintress watch <name> <dir> [--depth n] | unwatch <name>  register a directory to browse
 paintress attach <name>                                 keep the viewer alive while an agent works
 
 paintress install [client...] [--dry-run]               write MCP config entries
@@ -89,11 +102,11 @@ paintress watch demo ./demo
 
 Agents get the same guarantee from the MCP side: `paintress_viewer` ensures the viewer and registers the current project, and the MCP server re-checks it before every write, so the viewer is up before the first edit instead of after someone asks.
 
-A design file that has a sibling Markdown file of the same name (`home.ptr` → `home.md`) gets a notes button in the top-left corner of the canvas. Click it and the canvas narrows to make room for the note, read-only: what the design is for, what is still open, which requirement it answers.
+A design file that has a sibling Markdown file of the same name (`home.ptr` → `home.md`) gets a notes button in the top-left corner of the canvas. Click it and the canvas narrows to make room for the note: what the design is for, what is still open, which requirement it answers. The note is a plain Markdown file next to the design — write it yourself or let the agent write it; the panel is read-only.
 
-The rail in the top-right corner holds the project's design system. **Presets** are the project's colors, corner radii, spacing and font values: the agent references them (`$color-brand`) instead of pasting values, and you can change one here and watch the canvas update — no more "a bit bluer". Nodes can also reference a whole preset group; groups are shown read-only in the panel. **Components** is a read-only gallery of everything reusable the agent has built so far, so you can see progress and the agent can look before rebuilding something that already exists.
+The rail in the top-right corner holds the project's design system. **Presets** are the project's colors, corner radii, spacing and font values: the agent references them (`$color-brand`) instead of pasting values, and you can change one here and watch the canvas update — no more "a bit bluer". Nodes can also reference a whole preset group; groups are shown read-only in the panel. **Components** is a read-only gallery of everything reusable the agent has built so far, so you can see progress and the agent can look before rebuilding something that already exists. A font badge next to the version shows how many families loaded; when one is missing its tooltip names the substitute.
 
-Canvas navigation: wheel zooms at the pointer, space / middle button / empty area drags to pan, `Ctrl/Cmd+0` returns to 100%, `Shift+1` fits the window, and `Ctrl/Cmd+K` quickly switches design files. Selecting a node opens a read-only inspector. Files with more than one board get a board strip; the active board can be exported as PNG at 0.5x / 1x / 2x (1x means its design pixels). Edits made through the CLI or MCP are highlighted in the viewer, and clicks assign short ids that the agent can read back with `paintress_marks`.
+Canvas navigation: wheel zooms at the pointer, space / middle button / empty area drags to pan, `Ctrl/Cmd+0` returns to 100%, `Shift+1` fits the window, and `Ctrl/Cmd+K` quickly switches design files. Selecting a node opens a read-only inspector. Files with more than one board get a board strip; the active board can be exported as PNG at 0.5x / 1x / 2x (1x means its design pixels; the file is `<design>-<board>@<scale>x.png` and is scaled back when either edge exceeds 8192px). Edits made through the CLI or MCP are highlighted in the viewer, and clicks assign short ids that the agent can read back with `paintress_marks`.
 
 Projects are named after their directory path (`c-thun/raybend`), so the URL reads like the path: `http://localhost:3316/c-thun/raybend?file=design/editor.pen`. Project rows have an **×** on hover that unbinds the project (design files are untouched; an agent re-registers on its next start), and **Stop server** in the sidebar footer shuts the viewer process down — both ask for confirmation first.
 
@@ -102,6 +115,28 @@ The viewer follows the agent instead of asking you to manage it. When an agent s
 When npm has a newer release than the running one, the version badge in the header grows a second line in rust red; clicking it opens the upgrade prompt (one copyable sentence) and the GitHub link. The check is client-optional on the daemon side: if npm is unreachable, the badge simply stays as it is.
 
 The toolbar's right side has two viewer-only controls. **Canvas background** switches Light / Gray / Dark for the design surface without touching the rest of the UI. **Language** switches the interface between 中文 and EN; on first load it follows the browser, and anything that is not Chinese gets English. Both are per-browser and remembered locally. Registering a project, or dropping a new design file into a watched directory, updates every open viewer without a reload.
+
+## Design system
+
+One source of truth per project, so a change lands everywhere instead of on one screen:
+
+- **Tokens** live in `__preset.ptr` and are referenced as `$color-brand` — never pasted. Kinds: `color`, `radius`, `spacing`, `fontSize`, `font`.
+- **Preset groups** apply a set of token references to one node type; a node opts in with `preset: "card"`.
+- **Components** live in `__components.ptr`; the agent copies one in, so a design is not rebuilt from scratch.
+- **Fonts** are registered per family with a source (`web` CSS URL, a project `css`/`file`, a `system` font, or `bundle` for app-only fonts) and, when the source cannot be verified, a design-time `preview`. Every read reports which families loaded and which fell back.
+
+`paintress_preset seed` (dry-run by default) fills a coherent starter scale — 27 tokens, 6 preset groups and the two web fonts. `audit` finds drift, `establish` proposes tokens from repeated values, and `adjust` shows the blast radius before changing anything.
+
+## Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `PTR_BROWSER` | Browser executable used for screenshots and PNG export |
+| `PAINTRESS_HOME` | State directory (daemon registry, Chromium font cache); default `~/.paintress` |
+| `PAINTRESS_NO_OPEN` | `1` never opens a browser window |
+| `PAINTRESS_NO_AUTO_WEB` | `1` stops the MCP server from ensuring the viewer before writes |
+| `PAINTRESS_NO_WEB_FONTS` | `1` skips the built-in web fonts (offline / CI) |
+| `CI` | `true` behaves like `PAINTRESS_NO_OPEN` |
 
 ## MCP clients
 

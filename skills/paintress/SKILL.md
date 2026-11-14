@@ -50,7 +50,8 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 | `paintress_render` | write the canvas as a standalone HTML file |
 | `paintress_screenshot` | render to PNG (headless Chromium); `scale` is 0.2–2 (default **0.8** for agent review), 1x = design pixels, either edge capped to 8192px proportionally; pass `board` (id or name) to capture one board |
 | `paintress_marks` | read the user's click markers (`#1 → node id`) |
-| `paintress_preset` | project tokens (colors / radii / spacing / fonts) and preset groups: `list`, `set`, `remove`, `set-group`, `remove-group` |
+| `paintress_preset` | project tokens (colors / radii / spacing / font sizes / families) and preset groups: `list`, `set`, `remove`, `seed`, `set-group`, `remove-group` |
+| `paintress_font` | project font registry: `list`, `add`, `remove`, `default` |
 | `paintress_audit` | read-only design-system audit: literal values that could be tokens, orphan tokens, unused or dangling preset groups |
 | `paintress_establish` | propose tokens / preset groups from repeated literals; dry-run by default, `apply: true` writes |
 | `paintress_adjust` | preview the affected nodes of a token or group edit; dry-run by default, `apply: true` writes only `__preset.ptr` |
@@ -61,7 +62,7 @@ MCP: `paintress_viewer` does the same and hands back the URL.
 Two project-level files keep a design consistent. Both are created automatically when the project is registered; the human never has to manage them.
 
 **Presets (`__preset.ptr`) — colors, corner radii, spacing and font values live in one place.**
-- Before the first shape of a session, call `paintress_preset` with `action: "list"`. If it is empty, propose a small palette and a radius/spacing scale, then register each one with `action: "set"` (`type: "color"`, `"radius"`, `"spacing"` or `"font"`).
+- Before the first shape of a session, call `paintress_preset` with `action: "list"`. If it is empty, `action: "seed"` (dry-run first) writes a coherent scale — 27 tokens, 6 preset groups and the two web fonts; or register values yourself with `action: "set"` (`type: "color"`, `"radius"`, `"spacing"`, `"fontSize"` or `"font"`).
 - In the design, **always reference a preset** (`"fill": "$color-brand"`), never paste a raw hex or radius when a preset exists. Raw values are how the design drifts.
 - A preset group applies a set of token references to one node type (`action: "set-group"`, with `target` and `props`); a node opts in with `"preset": "<group>"`. Its own explicit properties still win.
 - Use `paintress_audit` to find drift. `paintress_establish` and `paintress_adjust` are dry-run by default; inspect the proposed changes before passing `apply: true`.
@@ -70,7 +71,13 @@ Two project-level files keep a design consistent. Both are created automatically
 **Components (`__components.ptr`) — look before you build.**
 - Before drawing a button, card, input, etc., call `paintress_component` with `action: "list"`.
 - If one fits, `action: "insert"` copies it into the design with fresh ids (a copy, not a live link) — then adjust the copy.
-- After you build something reusable, register it in the component library (`paintress_insert` with `"reusable": true`), so the next session can find it. Never rebuild a component that already exists.
+- After the same shape appears a second time, register it: `action: "add"` with the node id. It copies the subtree into the component library with fresh ids and strips nested `reusable` flags. Never rebuild a component that already exists.
+
+**Fonts (`x-paintress.fonts` in `__preset.ptr`) — every family needs a source and a preview.**
+- `paintress_font` `action: "list"` first. Register with `action: "add"`: `kind` is `web` (a CSS URL), `css` (a project CSS file), `file` (one font file), `system`, or `bundle`.
+- `system` and `bundle` **must** have `preview` — the family the canvas shows when the real one cannot be loaded. `css`/`file` paths are project-relative and must exist; `web` sources are CSS URLs.
+- `default` sets the font used by text nodes without a `fontFamily`. Those nodes are a gap: every read (`doc_info`, `validate`, `get`, write hints) reports them. Close the gap instead of shipping text that relies on the fallback.
+- Do not paste a family that has no registry entry; `validate` reports it as unregistered.
 
 ## Working rules
 
@@ -80,7 +87,7 @@ Two project-level files keep a design consistent. Both are created automatically
 4. **`#N` means a marker.** When the user writes `#1`, call `paintress_marks` and map `#1` to a real node id. Markers are per viewer session.
 5. **Top-level nodes are boards.** Use `paintress_doc_info` to list them before guessing what "the second screen" means.
 6. **After a batch, validate.** `paintress_validate` catches structural mistakes before the user opens the file.
-7. **Presets before pixels, components before building.** See above: colors and radii go through `paintress_preset`, and the component library is checked before anything new is drawn.
+7. **Presets before pixels, components before building, fonts before text.** See above: colors and radii go through `paintress_preset`, the component library is checked before anything new is drawn, and text nodes get a registered font (the default is a reported gap, not a result).
 8. **Screenshots are for you.** `paintress_screenshot` is how you look at the design; the HTML viewer is for the human. When a document has several boards, pass `board` to get just that page — an ambiguous name errors out and lists the candidates rather than guessing.
 
 ## Node fields worth knowing

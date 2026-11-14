@@ -1,6 +1,6 @@
 # 设计系统引导（Stage D）：字号 token、写入提示、组件上收、预设种子
 
-- 状态：D0 已实现（2026-11-15，记录见 `.agents/implementations/`）；其余待开工
+- 状态：**全部实现**（2026-11-15，D0–D6）；记录见 `.agents/implementations/2026-11-15_0101_fontsize-token.md`、`2026-11-15_0132_design-system-guidance.md`
 - 前置：A/B/C 批次已收口（`PLAN.md`）；三层模型见 `album.md`；存储见 `project-presets.md` 与 `components.md`。
 - 本文只写**本批的增量与裁决**，不复述三层模型。
 

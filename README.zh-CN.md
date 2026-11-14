@@ -18,10 +18,21 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 
 | 组成 | 作用 |
 | --- | --- |
-| MCP 工具 | 确保查看器在跑、新建、查询、读取、更新、插入、删除、移动、批量、校验、渲染、截图、画谱审计/提取/调整 |
+| MCP 工具 | paintress_viewer、paintress_new、paintress_doc_info、paintress_query、paintress_get、paintress_update、paintress_insert、paintress_delete、paintress_move、paintress_batch、paintress_validate、paintress_preset、paintress_font、paintress_audit、paintress_establish、paintress_adjust、paintress_component、paintress_render、paintress_screenshot、paintress_marks |
 | CLI | 同样的操作，外加查看器进程；不接 agent 也能用 |
 | 查看器 | 本地 web 服务：渲染设计稿、高亮变更、把点击的节点变成 `#1`、`#2`… |
 | 截图 | 整张画布或单个画板的 PNG；倍率 0.2–2、默认 0.8，单边最多 8192px |
+
+## 文件与格式
+
+新建的文件是 `.ptr`——同一套 JSON 设计稿的 paintress 风味。已有的 `.pen` 文件照样打开、编辑、渲染，区别只在扩展名。
+
+项目根下有两份文件保证整个项目一致。注册项目时会自动创建，它们和设计稿一样**应该进版本库**：
+
+| 文件 | 装什么 |
+| --- | --- |
+| `__preset.ptr` | 设计 token（颜色、倒角、间距、字号、字体族）、preset 组与字体注册表 |
+| `__components.ptr` | 可复用组件（标了 `reusable` 的节点） |
 
 ## 环境要求
 
@@ -59,7 +70,9 @@ paintress delete <file> <id>                           删除节点
 paintress move <file> <id> <parent> [--index n]        移动节点
 paintress batch <file> '<ops-json>'                    一次执行多个操作
 paintress validate <file>                              按格式规格校验
-paintress preset list|set|remove|set-group|remove-group ...  项目画谱（颜色/倒角/间距/字体与 preset 组）
+paintress preset list|set|remove|seed|set-group|remove-group ...
+                                                           token、组与整套起步尺度
+paintress font list|add|remove|default ...               项目字体注册表
 paintress audit <file>                            画谱审计（只读）
 paintress establish <file> [--apply]             提取 token / preset 组（默认只给建议）
 paintress adjust <file> --key k --value v [--apply]  调整画谱（默认只看影响面）
@@ -69,7 +82,7 @@ paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  渲染为 PN
 
 paintress web [--port n] [--idle ms] [--foreground]  确保查看器在跑（幂等，立刻返回）
 paintress ping | status | stop                         查看器控制
-paintress watch <name> <dir> | unwatch <name>          注册/移除要浏览的目录
+paintress watch <name> <dir> [--depth n] | unwatch <name>  注册/移除要浏览的目录
 paintress attach <name>                                agent 工作期间保持查看器存活
 
 paintress install [client...] [--dry-run]              写入 MCP 配置条目
@@ -89,15 +102,37 @@ paintress watch demo ./demo
 
 agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在跑并把当前项目注册进去，MCP server 还会在每次写操作前再确认一遍——于是查看器是在第一次编辑之前就起来的，而不是等人开口。
 
-设计稿旁边放一份同名 Markdown（`home.ptr` → `home.md`），画布左上角就会出现「笔记」按钮。点开后画布向右收窄、左侧切出笔记——只读：这份设计是干什么的、还有哪些待定、对应哪条需求。
+设计稿旁边放一份同名 Markdown（`home.ptr` → `home.md`），画布左上角就会出现「笔记」按钮。点开后画布向右收窄、左侧切出笔记：这份设计是干什么的、还有哪些待定、对应哪条需求。笔记就是设计稿旁边的一份普通 Markdown——您自己写，或者让 agent 写；面板本身只读。
 
-右上角的浮动工具条放的是这个项目的设计系统。**预设**是项目里的颜色、倒角、间距和字体值：agent 只写引用（`$color-brand`），不贴裸值；你在这里改一个值，画布立刻变——不用再说「红一点、再蓝一点」。节点还可以用 `preset` 引用一整组属性（谱式），面板里只读展示这些组。**组件**是只读画廊，把 agent 已经做好的可复用组件摊开给你看进度，也让 agent 动手前先来这儿找。
+右上角的浮动工具条放的是这个项目的设计系统。**预设**是项目里的颜色、倒角、间距和字体值：agent 只写引用（`$color-brand`），不贴裸值；你在这里改一个值，画布立刻变——不用再说「红一点、再蓝一点」。节点还可以用 `preset` 引用一整组属性（谱式），面板里只读展示这些组。**组件**是只读画廊，把 agent 已经做好的可复用组件摊开给你看进度，也让 agent 动手前先来这儿找。版本号旁边有字体徽章：加载了几个 family、缺的那几个用的是什么替代字体，都在它的提示里。
 
-画布操作：滚轮以指针为锚点缩放，空格 / 中键 / 空白处拖拽平移，`Ctrl/Cmd+0` 回到 100%，`Shift+1` 适应窗口，`Ctrl/Cmd+K` 快速切换设计稿。点中节点会打开只读属性面板。多画板文件会显示画板条；选中具体画板后可按 0.5x / 1x / 2x 导出 PNG（1x = 画板设计像素）。通过 CLI 或 MCP 做的修改会在查看器里高亮，点击会让节点获得短号，agent 用 `paintress_marks` 读回。
+画布操作：滚轮以指针为锚点缩放，空格 / 中键 / 空白处拖拽平移，`Ctrl/Cmd+0` 回到 100%，`Shift+1` 适应窗口，`Ctrl/Cmd+K` 快速切换设计稿。点中节点会打开只读属性面板。多画板文件会显示画板条；选中具体画板后可按 0.5x / 1x / 2x 导出 PNG（1x = 画板设计像素；文件名是 `<稿名>-<画板>@<倍率>x.png`，单边超过 8192px 会等比压回）。通过 CLI 或 MCP 做的修改会在查看器里高亮，点击会让节点获得短号，agent 用 `paintress_marks` 读回。
 
 查看器跟着 agent 走，不需要人管：agent 起查看器时窗口自己开在它那个项目上；项目随 agent 来去，带进出场动画。**最后一个项目被收走、或服务被关掉（侧栏 Stop server、空闲退出）时，页面自己倒计时十秒再关窗**——不用人去点标签页的 ×。没人看的浏览器也不再拖着进程不放。
 
 工具条右侧有两个只影响查看的开关。**画布背景**切 Light / Gray / Dark，只改画布区底色，不动界面其它部分（点档位或拖滑块）。**界面语言**在中 / EN 之间切；首次打开跟随浏览器语言，不是中文就是英文。两者都按浏览器记住。注册新项目、或往已跟踪目录里放一个新的设计稿，所有已打开的查看器都会自动刷新，不需要手按 F5。
+
+## 设计系统
+
+一个项目一套事实来源，改一处全项目跟着变，而不是各画各的：
+
+- **Token** 存在 `__preset.ptr`，设计稿里写 `$color-brand`，不贴裸值。种类：`color`、`radius`、`spacing`、`fontSize`、`font`。
+- **Preset 组**把一组 token 引用套到某类节点上；节点写 `preset: "card"` 即参与。
+- **组件**存在 `__components.ptr`；agent 复制一份进来用，不从零重画。
+- **字体**按 family 登记来源（`web` 的 CSS URL、项目内的 `css`/`file`、`system` 系统字体、或只存在于安装包的 `bundle`）；来源无法本地验证时还必须给设计期 `preview`。每次读取都会报告哪些 family 加载了、哪些用了替代。
+
+`paintress_preset seed`（默认 dry-run）一次补齐一套起步尺度——27 个 token、6 个 preset 组和两个网络字体。`audit` 找漂移，`establish` 从重复值里提 token，`adjust` 改动前先给影响面。
+
+## 环境变量
+
+| 变量 | 作用 |
+| --- | --- |
+| `PTR_BROWSER` | 截图与 PNG 导出用的浏览器可执行文件 |
+| `PAINTRESS_HOME` | 状态目录（daemon 注册表、Chromium 字体缓存）；默认 `~/.paintress` |
+| `PAINTRESS_NO_OPEN` | `1` 时不打开浏览器窗口 |
+| `PAINTRESS_NO_AUTO_WEB` | `1` 时 MCP 写操作前不再确保查看器在跑 |
+| `PAINTRESS_NO_WEB_FONTS` | `1` 时跳过内置网络字体（离线 / CI） |
+| `CI` | `true` 等价于 `PAINTRESS_NO_OPEN` |
 
 ## MCP 客户端
 

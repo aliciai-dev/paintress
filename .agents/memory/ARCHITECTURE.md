@@ -130,3 +130,16 @@
   审计有噪音风险（裸值与 token 等值才建议），但可 `--min-uses` 与 allowLiteral 收窄。
 - **证据**：`.agents/implementations/2026-11-14_2054_album-b-batch.md`；规格 `specs/album.md`。
 - **日期**：2026-11-14
+
+### D-011 — 字体是项目注册表，不是节点字段
+
+- **背景**：字体只是一个 CSS 字符串时，画布 / 截图 / 生产三处没有一致性保证；WSL 下查看器（Windows 浏览器）与截图（Linux Chromium）是两个 OS，「系统字体」在两边结论可相反。
+- **决定**：
+  1. 生产真值仍在 `fontFamily`（可写 stack 或 `$font` token），来源与替代放项目级 `x-paintress.fonts`（按 family 索引）；
+  2. `source.kind` 五种：web / css / file / system / bundle；`preview` 只在「本地无法验证」的来源（system / bundle）强制；
+  3. URL 由调用方给（查看器 `/files`、截图 `file://`），渲染器保持纯函数；字体 CSS 异步加载，探针用 canvas 宽度法（`document.fonts.check` 对缺失系统字体误报）；
+  4. 文本没写字体时用 `default`（未配置用内置 Inter + Noto Sans SC），并在所有读取入口报缺口；不做 error；
+  5. paintress 不带字体文件、不判授权与体积——客户项目自己的工程选择。
+- **后果**：截图与徽章能说清「谁加载了、谁用了替代」；旧稿会从 Times/宋体变成 Inter/Noto（有意的观感修正）；测试通过 `PAINTRESS_NO_WEB_FONTS=1` 与外网解耦。
+- **证据**：`specs/fonts.md`、`specs/design-system.md`、`.agents/implementations/2026-11-15_0132_font-registry.md`。
+- **日期**：2026-11-15

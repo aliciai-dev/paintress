@@ -215,3 +215,12 @@
 - 同步 README、SKILL 与单元规格；剩余跨文件事务、SVG 描边对齐、精确 mesh、导出并发/内存、全项目 dry-run 范围记录在审查报告中。
 - 质量基线：双端 `tsc` 0 错误、**28 文件 371 用例全绿**、`pnpm build` 通过。
 - 证据：`.agents/implementations/2026-11-14_2140_review-abc-batch.md`。
+
+### 设计系统引导 + 字体（Stage D/F，2026-11-15）
+
+- 字号 token 单列（D0）：`fontSize` 落盘 number，老 `font` + 数字值读取归一；`PROP_TOKEN_KIND` 成为唯一映射，validate 加引用类型校验。
+- 引导闭环：写路径 `hints`（等值 token / 缺字体 / 未登记 family）、`doc_info`/`new` 的 `designSystem`、预设种子（27 token + 6 组 + 2 个网络字体）、组件 `add` 上收。
+- 字体：`__preset.ptr#x-paintress.fonts`（web/css/file/system/bundle + preview + metrics）；渲染按注册表注入并异步加载 CSS；截图等 `fonts.ready` 并回 loaded/missing/substituted；查看器出字体徽章；缺口进 validate/audit。
+- 提示词：MCP `INSTRUCTIONS` 增设计系统段，20 个工具描述与 48 个参数说明改英文；SKILL/README 双语与 `TERMS.md` 同步；`test/docs.spec.ts` 锁文档。
+- 质量基线：双端 `tsc` 0 错误、**30 文件 394 用例全绿**、`pnpm build` 通过。
+- 证据：`.agents/implementations/2026-11-15_0101_fontsize-token.md`、`2026-11-15_0132_font-registry.md`、`2026-11-15_0132_design-system-guidance.md`；决策 `ARCHITECTURE.md#D-011`。
