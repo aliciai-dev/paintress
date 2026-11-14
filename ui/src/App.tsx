@@ -131,6 +131,13 @@ export default function App() {
   const [fontReport, setFontReport] = createSignal<{ checked: string[]; missing: string[] } | null>(null);
   // 切稿时先清掉上一张稿的字体报告，等新稿的探针回来再显示
   createEffect(on(activeFile, () => setFontReport(null)));
+  // 标签页标题跟着「在看什么」走：一堆标签页里能认出哪一个是这张稿
+  createEffect(() => {
+    const project = activeProject();
+    const file = activeFile();
+    document.title =
+      file !== null ? `${file} · paintress` : project !== null ? `${project} · paintress` : 'paintress · design viewer';
+  });
   onMount(() => {
     const onMessage = (ev: MessageEvent): void => {
       const data = ev.data as { type?: unknown; checked?: unknown; missing?: unknown } | null;

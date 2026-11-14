@@ -222,7 +222,7 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-size: 12p
 `;
 
 function layout(title: string, body: string): string {
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title} · paintress</title><style>${PAGE_CSS}</style></head><body>${body}</body></html>`;
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · paintress</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="theme-color" content="#f6f1ea"><style>${PAGE_CSS}</style></head><body>${body}</body></html>`;
 }
 
 function esc(s: string): string {

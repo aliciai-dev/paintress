@@ -111,6 +111,17 @@ async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
   }
 }
 
+/** 等标签页标题变成期望值；超时就把实际标题返回给断言，失败信息里能直接看出差在哪 */
+async function titleBecomes(page: Page, want: string, timeoutMs = 15_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = await page.title();
+  while (seen !== want && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+    seen = await page.title();
+  }
+  return seen;
+}
+
 browserDescribe('查看器交互（真实浏览器）', () => {
   it('笔记抽屉：打开收窄画布、图标消失、关闭恢复', async () => {
     const page = await openViewer();
@@ -279,6 +290,18 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       // Esc 收起浮层
       await page.keyboard.press('Escape');
       await page.waitForSelector('.components-panel', { state: 'detached' });
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('标签页标题：跟着当前设计稿走，不再只有 paintress', async () => {
+    const page = await openViewer();
+    try {
+      // 默认壳的标题在打开设计稿后被客户端改写（多标签页里能认出是哪一张）
+      expect(await titleBecomes(page, 'design.ptr · paintress')).toBe('design.ptr · paintress');
+      await page.goto(`http://127.0.0.1:${daemon.port}/${PROJECT}?file=second.ptr`, { waitUntil: 'domcontentloaded' });
+      expect(await titleBecomes(page, 'second.ptr · paintress')).toBe('second.ptr · paintress');
     } finally {
       await page.close();
     }
