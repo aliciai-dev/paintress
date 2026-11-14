@@ -19,6 +19,28 @@
 
 阶段 2 是地基，架构决定成败，其余三阶段都建立在它之上（理由见 `.agents/memory/ARCHITECTURE.md#D-002`）。
 
+## 当前批次（2026-11-14）：A 查看器 + B 画谱 + C 渲染器
+
+> 顺序即执行顺序。每个单元的规格已先行落盘；进度只在 todo 工具里，本表只说范围与出口。
+> 「本会话不做」的条目在 `.agents/memory/FUTURE.md`。
+
+| 序 | 单元 | 规格 | 出口（验收摘要） |
+| --- | --- | --- | --- |
+| A1 | 查看器只读属性面板 | `specs/viewer-inspector.md` | 选中出面板、切节点跟随；只读，不新增写路径 |
+| A2 | 多稿快速切换 | `specs/viewer-file-switcher.md` | Cmd/Ctrl+K + 模糊过滤 + 键盘全程；不新增浏览历史 |
+| A3 | 单帧导出 PNG | `specs/frame-export.md` | 画板级导出 2x/1x/0.5x；<=4096px；文件名可预期 |
+| C1 | 椭圆弧形 / 圆环 | `specs/renderer-gaps.md` | startAngle/sweepAngle/innerRadius 真实几何 |
+| C2 | 多边形圆角 | `specs/renderer-gaps.md` | cornerRadius 生效，不再忽略 |
+| C3 | mesh_gradient 近似 | `specs/renderer-gaps.md` | 网格点插值，不再退化成单色 |
+| B1 | 画谱：token 分类 | `specs/album.md` | kind 扩展 + validate 认识 tokens |
+| B2 | 画谱：preset 组 + 节点引用 | `specs/album.md` | 渲染时生效、显式属性优先、不烤值 |
+| B3 | 画谱：audit | `specs/album.md` | MCP + CLI 一份可读报告 |
+| B4 | 画谱：establish | `specs/album.md` | 候选提取（不写盘）→ 批准后一次写入 |
+| B5 | 画谱：adjust + dry-run | `specs/album.md` | 影响面 diff；apply 才写预设文件 |
+| B6 | 画谱：手改面板扩展 | `specs/album.md` | 按 kind 分组编辑；组只读展示 |
+
+依赖：A1 与 A3 都要动画布右侧/画板条，先 A1 再 A2 再 A3；C1–C3 互相独立，可穿插；B1→B2→B3 是硬顺序，B4/B5 依赖 B2。
+
 ## 未决问题
 
 - **dts 生成被禁用（债务）**：zod passthrough 推断类型超过 TS 序列化上限（TS7056，实测定位在 `src/schema/nodes.ts:209` 的 `NodeSchema`）。2026-11-11 实验：只给 `NodeSchema` 加显式注解即可通过构建，但 `index.d.ts` 达 1548 KB（包体从 164 KB → 1.67 MB），故 0.1.0 不发类型产物；要发需先给全部导出 schema 显式注解瘦身，或按需导出 + api-extractor。
