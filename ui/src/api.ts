@@ -163,15 +163,22 @@ export function fetchChanges(project: string, file: string): Promise<ChangesResp
 export interface PresetItem {
   /** 变量名，设计稿里写 `$key` */
   key: string;
-  type: 'color' | 'radius';
+  type: 'color' | 'radius' | 'spacing' | 'font';
   name: string;
   value: string;
+}
+
+/** 预设组（谱式）：按节点类型生效的一组 $token 属性 */
+export interface PresetGroup {
+  target: string;
+  props: Record<string, string>;
 }
 
 export interface PresetsResponse {
   ok: boolean;
   path: string | null;
   items: PresetItem[];
+  groups?: Record<string, PresetGroup>;
 }
 
 export interface NotesResponse {

@@ -36,8 +36,14 @@ import { VERSION } from './shared/version.js';
  *   paintress render <file> <out.html>
  *   paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]   (缺省 0.8)
  *   paintress validate <file>
+ *   paintress audit <file>                            画谱审计（只读）
+ *   paintress establish <file> [--apply] [--min-uses n]  提取候选（默认只给建议）
+ *   paintress adjust <file> --key k --value v [--apply]  改 token；或 --group g --prop p
  *   paintress preset list [dir]                       项目预设列表
- *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius）
+ *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius|spacing|font）
+ *   paintress preset groups [dir]                     列出 preset 组（谱式）
+ *   paintress preset set-group <dir> <组名> <target> '<props-json>'
+ *   paintress preset remove-group <dir> <组名>
  *   paintress preset remove <dir> <key>               删一条预设
  *   paintress component list [dir]                    项目组件库列表
  *   paintress component insert <file> <id>            把组件复制进设计稿
@@ -62,7 +68,7 @@ export interface ParsedCommand {
 
 const NO_OPEN_FLAG = 'no-open';
 
-const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', NO_OPEN_FLAG]);
+const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', NO_OPEN_FLAG]);
 /** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
 const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', NO_OPEN_FLAG]);
 
@@ -139,7 +145,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   const parsed = parseArgv(argv);
   if (!parsed) {
-    console.error('用法：paintress <mcp|web|ping|status|watch|unwatch|attach|stop|new|info|query|get|update|insert|delete|move|batch|render|shot|validate|install|doctor|mcp-config> ...（版本：paintress --version）');
+    console.error('用法：paintress <mcp|web|ping|status|watch|unwatch|attach|stop|new|info|query|get|update|insert|delete|move|batch|render|shot|validate|audit|establish|adjust|install|doctor|mcp-config> ...（版本：paintress --version）');
     return 2;
   }
   const { cmd, positionals, flags } = parsed;
@@ -353,9 +359,29 @@ export async function main(argv: string[]): Promise<number> {
       const action = file ?? 'list';
       if (action === 'list') {
         out = await call('paintress_preset', { action: 'list', ...(a1 !== undefined ? { path: a1 } : {}) });
+      } else if (action === 'groups') {
+        const full = (await call('paintress_preset', {
+          action: 'list',
+          ...(a1 !== undefined ? { path: a1 } : {}),
+        })) as { path?: string | null; groups?: unknown };
+        out = { ok: true, path: full.path ?? null, groups: full.groups ?? {} };
+      } else if (action === 'set-group') {
+        if (!a1 || !a2 || !positionals[3] || !positionals[4]) {
+          throw new Error("用法：paintress preset set-group <dir> <组名> <target> '<props-json>'");
+        }
+        let props: Record<string, string>;
+        try {
+          props = JSON.parse(positionals[4]) as Record<string, string>;
+        } catch {
+          throw new Error(`props 不是合法 JSON：${positionals[4]}`);
+        }
+        out = await call('paintress_preset', { action: 'set-group', path: a1, group: a2, target: positionals[3], props });
+      } else if (action === 'remove-group') {
+        if (!a1 || !a2) throw new Error('用法：paintress preset remove-group <dir> <组名>');
+        out = await call('paintress_preset', { action: 'remove-group', path: a1, group: a2 });
       } else if (action === 'set') {
         if (!a1 || !a2 || !positionals[3] || !positionals[4]) {
-          throw new Error('用法：paintress preset set <dir> <key> <color|radius> <value> [--name 名称]');
+          throw new Error('用法：paintress preset set <dir> <key> <color|radius|spacing|font> <value> [--name 名称]');
         }
         out = await call('paintress_preset', {
           action: 'set',
@@ -369,7 +395,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!a1 || !a2) throw new Error('用法：paintress preset remove <dir> <key>');
         out = await call('paintress_preset', { action: 'remove', path: a1, key: a2 });
       } else {
-        throw new Error(`未知 preset 动作：${action}（list / set / remove）`);
+        throw new Error(`未知 preset 动作：${action}（list / set / remove / set-group / remove-group）`);
       }
       console.log(JSON.stringify(out, null, 2));
       return 0;
@@ -477,6 +503,34 @@ export async function main(argv: string[]): Promise<number> {
       case 'render': {
         if (!a1) throw new Error('缺少 <out.html> 参数');
         out = await call('paintress_render', { path: file, out: a1 });
+        break;
+      }
+      case 'audit': {
+        out = await call('paintress_audit', { path: file });
+        break;
+      }
+      case 'establish': {
+        out = await call('paintress_establish', {
+          path: file,
+          ...(flags['apply'] === true ? { apply: true } : {}),
+          ...(flagNum(flags, 'min-uses') !== undefined ? { minUses: flagNum(flags, 'min-uses') } : {}),
+        });
+        break;
+      }
+      case 'adjust': {
+        const key = flagStr(flags, 'key');
+        const group = flagStr(flags, 'group');
+        const prop = flagStr(flags, 'prop');
+        const value = flagStr(flags, 'value');
+        if (value === undefined) throw new Error('adjust 需要 --value');
+        out = await call('paintress_adjust', {
+          path: file,
+          value,
+          ...(key !== undefined ? { key } : {}),
+          ...(group !== undefined ? { group } : {}),
+          ...(prop !== undefined ? { prop } : {}),
+          ...(flags['apply'] === true ? { apply: true } : {}),
+        });
         break;
       }
       case 'shot': {

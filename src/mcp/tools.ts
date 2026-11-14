@@ -5,6 +5,8 @@ import { loadDoc, saveDoc, type DocFlavor } from '../doc/io.js';
 import { createDoc } from '../doc/create.js';
 import { collectIds, genId } from '../doc/id.js';
 import { validateDoc } from '../doc/validate.js';
+import { auditDoc, auditInputFrom } from '../doc/audit.js';
+import { applyAdjust, applyEstablish, planAdjust, planEstablish, readPresetDoc } from '../doc/album.js';
 import {
   applyProjectPresets,
   componentsPathFor,
@@ -13,6 +15,10 @@ import {
   isPresetType,
   listComponents,
   listPresets,
+  listPresetGroups,
+  readPresetFile,
+  setPresetGroup,
+  removePresetGroup,
   presetPathFor,
   readComponentsFile,
   removePreset,
@@ -102,7 +108,11 @@ async function write(
   // 校验看「合并项目预设后」的文档，保存写回未合并的原文档：
   // 否则一次 update 就会把预设值烤进设计稿，人再调预设就不生效了。
   const presetNames = projectPresetNames(path);
-  const v = validateDoc(loaded.doc, { knownVars: presetNames, presetVars: presetNames });
+  const v = validateDoc(loaded.doc, {
+    knownVars: presetNames,
+    presetVars: presetNames,
+    presetGroups: listPresetGroups(path).groups,
+  });
   if (!v.ok) {
     throw new Error(`变更后结构校验失败，未落盘：\n${v.errors.map((e) => `  ${e.path}: ${e.message}`).join('\n')}`);
   }
@@ -379,40 +389,133 @@ export const TOOLS: Record<string, ToolDef> = {
       // 校验看的是「文档自己有什么变量」+「项目预设提供了哪些名字」：
       // 不能拿合并后的文档来校验，否则每个预设变量都会被误判成本地覆盖。
       const presetNames = projectPresetNames(path);
-      return validateDoc(loaded.doc, { knownVars: presetNames, presetVars: presetNames });
+      return validateDoc(loaded.doc, {
+        knownVars: presetNames,
+        presetVars: presetNames,
+        presetGroups: listPresetGroups(path).groups,
+      });
     },
   },
 
   paintress_preset: {
     description:
-      '项目预设：颜色 / 倒角这类会反复微调的值在项目里存一份（__preset.ptr），设计稿里写 $key 引用。作画前先把颜色与倒角定下来注册成预设；人在查看器里改预设值，画布实时变，不用一句句说「红一点」。action=list 查看，set 新建/改值，remove 删除',
+      '项目预设（画谱的 token 与谱式）：颜色 / 倒角 / 间距 / 字体这类会反复微调的值在项目里存一份（__preset.ptr），设计稿里写 $key 引用。action=list 看全部（含 preset 组），set 新建/改值，remove 删除；set-group 定义一组按节点类型生效的属性（值必须是 $token，如 {fill:"$color-brand"}），节点写 preset:"<组名>" 即生效',
     inputSchema: {
-      action: z.enum(['list', 'set', 'remove']),
+      action: z.enum(['list', 'set', 'remove', 'set-group', 'remove-group']),
       path: z.string().optional().describe('设计稿或项目目录，默认当前工作目录'),
-      key: z.string().optional().describe('变量名，设计稿里写 $key；set / remove 必填'),
-      type: z.enum(['color', 'radius']).optional().describe('预设类型；set 必填'),
+      key: z.string().optional().describe('token 名，设计稿里写 $key；set / remove 必填'),
+      type: z.enum(['color', 'radius', 'spacing', 'font']).optional().describe('token 类型；set 必填'),
       name: z.string().optional().describe('人看的名称，默认同 key'),
-      value: z.string().optional().describe("值：颜色写 #RRGGBB（或 #RGB / #RRGGBBAA），倒角写非负数字，如 '8'；set 必填"),
+      value: z.string().optional().describe("值：颜色 #RRGGBB（或 #RGB / #RRGGBBAA），倒角/间距写非负数字，字体写字体族；set 必填"),
+      group: z.string().optional().describe('preset 组名；set-group / remove-group 必填'),
+      target: z.string().optional().describe('preset 组的适用节点类型（frame / text / rectangle …）；set-group 必填'),
+      props: z.record(z.string()).optional().describe('preset 组的属性 → $token 引用，如 {"fill":"$color-brand"}；set-group 必填'),
     },
     run: (a) => {
       const from = resolve(optStr(a, 'path') ?? process.cwd());
       const action = optStr(a, 'action') ?? 'list';
       if (action === 'list') {
         const { path, items } = listPresets(from);
-        return { ok: true, path, items };
+        return { ok: true, path, items, groups: listPresetGroups(from).groups };
+      }
+      if (action === 'set-group') {
+        const props = a['props'];
+        if (props === null || typeof props !== 'object' || Array.isArray(props)) {
+          throw new Error('props 必须是对象：属性 → $token 引用');
+        }
+        const clean: Record<string, string> = {};
+        for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
+          if (typeof v !== 'string') throw new Error(`props.${k} 必须是 $token 字符串`);
+          clean[k] = v;
+        }
+        const res = setPresetGroup(from, { name: reqStr(a, 'group'), target: reqStr(a, 'target'), props: clean });
+        return { ok: true, ...res };
+      }
+      if (action === 'remove-group') {
+        return { ok: true, ...removePresetGroup(from, reqStr(a, 'group')) };
       }
       const key = reqStr(a, 'key');
-      if (action === 'remove') return { ok: true, path: presetPathFor(from), items: removePreset(from, key) };
+      if (action === 'remove') {
+        const items = removePreset(from, key);
+        return { ok: true, path: presetPathFor(from), items, groups: listPresetGroups(from).groups };
+      }
       const type = optStr(a, 'type');
-      if (!isPresetType(type)) throw new Error('type 必须是 color 或 radius');
+      if (!isPresetType(type)) throw new Error('type 必须是 color / radius / spacing / font');
       const name = optStr(a, 'name');
       const items = setPreset(from, {
         key,
-        type: type as PresetType,
+        type,
         value: reqStr(a, 'value'),
         ...(name !== undefined ? { name } : {}),
       });
-      return { ok: true, path: presetPathFor(from), items };
+      return { ok: true, path: presetPathFor(from), items, groups: listPresetGroups(from).groups };
+    },
+  },
+
+  paintress_audit: {
+    description:
+      '画谱审计（只读）：列出把颜色/圆角/间距写成裸值、可替换成 $token 的节点；孤儿 token；从未被节点引用的 preset 组；悬空的 preset 引用；preset 组里写死字面量的属性。改不改由你和人决定',
+    inputSchema: { path: z.string().describe('设计稿路径（项目预设自动从所在项目读取）') },
+    run: (a) => {
+      const path = reqStr(a, 'path');
+      const loaded = loadDoc(path);
+      const { items } = listPresets(path);
+      const presetPath = presetPathFor(path);
+      const presetDoc = presetPath === null ? null : (readPresetFile(presetPath)?.doc ?? null);
+      const input = auditInputFrom(
+        loaded.doc,
+        items.map((p) => ({ key: p.key, type: p.type, value: p.value })),
+        presetDoc,
+      );
+      return { ok: true, path, ...auditDoc(loaded.doc, input) };
+    },
+  },
+
+  paintress_establish: {
+    description:
+      '画谱提取：从现有设计稿里找出重复出现的字面量（颜色/圆角/间距）建议成 $token，并把「同类节点带同一组属性」建议成 preset 组。默认只给建议（apply=false）；apply=true 会写 __preset.ptr 并把命中的节点改写成引用（带 mtime 防覆盖）',
+    inputSchema: {
+      path: z.string().describe('设计稿路径'),
+      apply: z.boolean().optional().describe('true 才落盘：写预设文件并改写节点；默认 false 只出建议'),
+      minUses: z.number().int().min(2).optional().describe('至少出现几次才算候选，默认 2'),
+    },
+    run: (a) => {
+      const path = reqStr(a, 'path');
+      const loaded = loadDoc(path);
+      const minUses = typeof a['minUses'] === 'number' ? (a['minUses'] as number) : undefined;
+      const plan = planEstablish(loaded.doc, { ...(minUses !== undefined ? { minUses } : {}) });
+      if (a['apply'] !== true) return { ok: true, applied: false, ...plan };
+      return { ok: true, ...applyEstablish(path, plan) };
+    },
+  },
+
+  paintress_adjust: {
+    description:
+      '画谱调整：改一处、先看影响面。key=改一个 token 的值；group+prop=改 preset 组的某个属性。默认 dry-run（apply=false）只返回受影响节点与 before→after；apply=true 才写 __preset.ptr——设计稿里的 $引用自动跟着变，不需要批量改稿',
+    inputSchema: {
+      path: z.string().describe('设计稿路径（项目预设自动从所在项目读取）'),
+      key: z.string().optional().describe('要改的 token 名'),
+      group: z.string().optional().describe('要改的 preset 组名'),
+      prop: z.string().optional().describe('组里要改的属性名（配合 group）'),
+      value: z.string().describe('新值：颜色 #RRGGBB，数值写数字，字体写字体族'),
+      apply: z.boolean().optional().describe('true 才写预设文件；默认 false 只出影响面'),
+    },
+    run: (a) => {
+      const path = reqStr(a, 'path');
+      const value = reqStr(a, 'value');
+      const loaded = loadDoc(path);
+      const presetDoc = readPresetDoc(path);
+      const key = optStr(a, 'key');
+      const group = optStr(a, 'group');
+      const prop = optStr(a, 'prop');
+      const plan = planAdjust(loaded.doc, presetDoc, {
+        ...(key !== undefined ? { key } : {}),
+        ...(group !== undefined ? { group } : {}),
+        ...(prop !== undefined ? { prop } : {}),
+        value,
+      });
+      if (a['apply'] !== true) return { ok: true, applied: false, ...plan };
+      return { ok: true, ...applyAdjust(path, presetDoc, plan) };
     },
   },
 

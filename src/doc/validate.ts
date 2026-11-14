@@ -1,4 +1,5 @@
 import { DocumentSchema, KNOWN_NODE_TYPES, VARIABLE_NAME } from '../schema/index.js';
+import type { PresetGroup } from './presets.js';
 import { collectIds } from './id.js';
 
 /** 校验结果：errors 阻断写入，warnings 不阻断 */
@@ -19,6 +20,8 @@ export interface ValidateOptions {
   knownVars?: Iterable<string>;
   /** 文档本地定义了同名的项目预设 → 给警告（查看器里调预设不会影响这份文件） */
   presetVars?: Iterable<string>;
+  /** 项目预设组（谱式）：节点 `preset` 引用与组内裸值都要检查 */
+  presetGroups?: Record<string, PresetGroup>;
 }
 
 /** 结构校验（schema）+ 语义校验（重复 id、悬空 ref、未知类型、未解析变量） */
@@ -65,11 +68,37 @@ export function validateDoc(input: unknown, opts: ValidateOptions = {}): Validat
       if (type === 'ref' && typeof rec['ref'] === 'string' && !seen.has(rec['ref'])) {
         warnings.push({ level: 'warning', path: here, message: `ref 指向不存在的组件 id "${String(rec['ref'])}"` });
       }
+      const presetName = rec['preset'];
+      if (typeof presetName === 'string' && presetName !== '') {
+        const group = opts.presetGroups?.[presetName];
+        if (group === undefined) {
+          warnings.push({ level: 'warning', path: here, message: `preset "${presetName}" 不存在` });
+        } else if (group.target !== type) {
+          warnings.push({
+            level: 'warning',
+            path: here,
+            message: `preset "${presetName}" 适用于 ${group.target}，这里是 ${String(type)}`,
+          });
+        }
+      }
       const kids = rec['children'];
       if (Array.isArray(kids)) walk(kids, `${here}/children`);
     }
   };
   walk(doc.children, 'children');
+
+  // 谱式本身的越界：属性值必须是 $token，不能是裸值
+  for (const [name, group] of Object.entries(opts.presetGroups ?? {})) {
+    for (const [prop, value] of Object.entries(group.props)) {
+      if (!VARIABLE_NAME.test(value)) {
+        warnings.push({
+          level: 'warning',
+          path: `<preset:${name}>`,
+          message: `preset 组里的 ${prop} 是字面量 "${value}"，应当写成 $token 引用`,
+        });
+      }
+    }
+  }
 
   // 未解析变量引用（$name 不在 variables 表，也不在项目预设里）
   const localNames = new Set(doc.variables ? Object.keys(doc.variables) : []);

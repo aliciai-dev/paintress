@@ -6,12 +6,16 @@ import {
   applyProjectPresets,
   COMPONENTS_FILE,
   ensureProjectScaffold,
+  listPresetGroups,
   listPresets,
   PRESET_FILE,
   removePreset,
+  removePresetGroup,
   setPreset,
+  setPresetGroup,
   withProjectPresets,
 } from '../src/doc/project.js';
+import { renderDocument } from '../src/render/index.js';
 import { validateDoc } from '../src/doc/validate.js';
 import { loadDoc } from '../src/doc/io.js';
 import type { PenDocument } from '../src/schema/index.js';
@@ -105,6 +109,87 @@ describe('合并与校验', () => {
     expect(presetNames.has('color-brand')).toBe(true);
     expect(doc.variables?.['color-brand']).toMatchObject({ value: '#3B82F6' });
     expect(loaded.doc.variables?.['color-brand']).toBeUndefined();
+  });
+});
+
+describe('谱值扩展：间距 / 字体（B1）', () => {
+  it('spacing 落盘为 number，font 落盘为 string', () => {
+    setPreset(root, { key: 'space-md', type: 'spacing', value: '12' });
+    setPreset(root, { key: 'font-body', type: 'font', value: 'Inter, sans-serif' });
+    const doc = loadDoc(join(root, PRESET_FILE)).doc;
+    expect(doc.variables?.['space-md']).toMatchObject({ type: 'number', value: 12 });
+    expect(doc.variables?.['font-body']).toMatchObject({ type: 'string', value: 'Inter, sans-serif' });
+    expect(listPresets(root).items.find((p) => p.key === 'font-body')?.type).toBe('font');
+  });
+
+  it('间距同样是「非负数字」，空字体被拒', () => {
+    expect(() => setPreset(root, { key: 'bad-space', type: 'spacing', value: '-1' })).toThrow(/非负/);
+    expect(() => setPreset(root, { key: 'bad-font', type: 'font', value: '   ' })).toThrow(/不能为空/);
+  });
+});
+
+describe('谱式：preset 组 + 节点引用（B2）', () => {
+  it('写组不丢 token，写 token 不丢组', () => {
+    setPresetGroup(root, { name: 'body-text', target: 'text', props: { fill: '$color-brand', fontSize: '$space-md' } });
+    setPreset(root, { key: 'color-muted', type: 'color', value: '#7a7166' });
+
+    const groups = listPresetGroups(root).groups;
+    expect(groups['body-text']).toEqual({ target: 'text', props: { fill: '$color-brand', fontSize: '$space-md' } });
+    expect(listPresets(root).items.some((p) => p.key === 'color-muted')).toBe(true);
+
+    removePreset(root, 'color-muted');
+    expect(listPresetGroups(root).groups['body-text']).toBeDefined();
+  });
+
+  it('渲染时先铺组属性，节点自己的属性优先', () => {
+    const presetDoc = loadDoc(join(root, PRESET_FILE)).doc;
+    const doc = {
+      version: '2.22',
+      variables: {},
+      children: [
+        {
+          type: 'frame',
+          id: 'board',
+          width: 200,
+          height: 100,
+          children: [
+            { type: 'text', id: 'a', preset: 'body-text', content: 'A' },
+            { type: 'text', id: 'b', preset: 'body-text', content: 'B', fill: '#FF0000' },
+          ],
+        },
+      ],
+    } as unknown as PenDocument;
+
+    const merged = withProjectPresets(doc, presetDoc);
+    const out = renderDocument(merged);
+    const html = out.html;
+    // a：组里的 fill 生效；b：自己的 #FF0000 覆盖组里的 $color-brand
+    expect(html).toContain('color:#3B82F6');
+    expect(html).toContain('color:#FF0000');
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('悬空引用 / 类型不符 / 组里写裸值 → 校验警告', () => {
+    const doc = {
+      version: '2.22',
+      children: [
+        { type: 'text', id: 'a', preset: 'nope' },
+        { type: 'rectangle', id: 'b', preset: 'body-text' },
+      ],
+    } as unknown as PenDocument;
+    const warnings = validateDoc(doc, {
+      presetGroups: {
+        'body-text': { target: 'text', props: { fill: '$color-brand', opacity: '0.5' } },
+      },
+    }).warnings.map((w) => w.message);
+    expect(warnings.some((m) => m.includes('preset "nope" 不存在'))).toBe(true);
+    expect(warnings.some((m) => m.includes('适用于 text'))).toBe(true);
+    expect(warnings.some((m) => m.includes('是字面量 "0.5"'))).toBe(true);
+  });
+
+  it('删组后引用变悬空（不静默）', () => {
+    removePresetGroup(root, 'body-text');
+    expect(listPresetGroups(root).groups['body-text']).toBeUndefined();
   });
 });
 

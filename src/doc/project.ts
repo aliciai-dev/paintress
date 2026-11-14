@@ -3,6 +3,9 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadDoc, saveDoc } from './io.js';
 import { PEN_DOC_VERSION, type PenDocument } from '../schema/index.js';
+import { presetGroupsOf, type PresetGroup } from './presets.js';
+
+export { presetGroupsOf, type PresetGroup };
 
 /**
  * 项目级预设与组件库（规格见 specs/project-presets.md、specs/components.md）。
@@ -15,8 +18,11 @@ import { PEN_DOC_VERSION, type PenDocument } from '../schema/index.js';
 export const PRESET_FILE = '__preset.ptr';
 export const COMPONENTS_FILE = '__components.ptr';
 
-/** 预设类型：一期只做颜色与倒角；值是字串，落盘按变量真实类型 */
-export type PresetType = 'color' | 'radius';
+/**
+ * 预设（token）类型：`color` / `radius` / `spacing` / `font`。
+ * 值对外一律是字串，落盘按变量真实类型（color→color，radius/spacing→number，font→string）。
+ */
+export type PresetType = 'color' | 'radius' | 'spacing' | 'font';
 
 export interface PresetItem {
   /** 变量名，设计稿里用 `$key` 引用 */
@@ -36,7 +42,7 @@ export interface PresetFile {
 }
 
 export function isPresetType(v: unknown): v is PresetType {
-  return v === 'color' || v === 'radius';
+  return v === 'color' || v === 'radius' || v === 'spacing' || v === 'font';
 }
 
 /** 拼出设计稿旁边那份笔记的绝对路径（只认 .ptr / .pen，其余扩展名返回 null） */
@@ -100,6 +106,7 @@ function presetKindOf(key: string, doc: PenDocument): PresetType | null {
   const t = isRecord(def) ? def['type'] : undefined;
   if (t === 'color') return 'color';
   if (t === 'number') return 'radius';
+  if (t === 'string') return 'font';
   return null;
 }
 
@@ -142,8 +149,26 @@ export function listPresets(from: string): { path: string | null; items: PresetI
  */
 export function withProjectPresets(doc: PenDocument, presetDoc: PenDocument | null): PenDocument {
   const vars = presetDoc?.variables;
-  if (!vars || Object.keys(vars).length === 0) return doc;
-  return { ...doc, variables: { ...vars, ...(doc.variables ?? {}) } };
+  const presetGroups = presetGroupsOf(presetDoc);
+  const ownGroups = presetGroupsOf(doc);
+  const groups = { ...presetGroups, ...ownGroups };
+  const hasVars = vars !== undefined && Object.keys(vars).length > 0;
+  const hasGroups = Object.keys(groups).length > 0;
+  if (!hasVars && !hasGroups) return doc;
+
+  const merged: PenDocument = { ...doc, ...(hasVars ? { variables: { ...vars, ...(doc.variables ?? {}) } } : {}) };
+  if (!hasGroups) return merged;
+  // 预设组跟着变量一起进「渲染/校验副本」：节点上的 preset 引用才解析得开
+  const meta = (doc as Record<string, unknown>)['x-paintress'];
+  const metaObj = isRecord(meta) ? meta : {};
+  const presets = isRecord(metaObj['presets']) ? metaObj['presets'] : {};
+  return {
+    ...merged,
+    ['x-paintress']: {
+      ...metaObj,
+      presets: { ...presets, groups },
+    },
+  } as PenDocument;
 }
 
 /**
@@ -180,21 +205,54 @@ export function normalizePresetValue(type: PresetType, value: string): string | 
     if (!COLOR_RE.test(raw)) throw new Error(`颜色预设只接受 #RGB / #RRGGBB / #RRGGBBAA，收到：${value}`);
     return raw.toUpperCase();
   }
+  if (type === 'font') {
+    if (raw === '') throw new Error('字体预设不能为空');
+    return raw;
+  }
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) throw new Error(`倒角预设只接受非负数，收到：${value}`);
+  if (!Number.isFinite(n) || n < 0) {
+    const what = type === 'spacing' ? '间距' : '倒角';
+    throw new Error(`${what}预设只接受非负数，收到：${value}`);
+  }
   return n;
 }
 
-/** 变量表里的 type：color → color，radius → number */
-function varTypeOf(type: PresetType): 'color' | 'number' {
-  return type === 'color' ? 'color' : 'number';
+/** 变量表里的 type：color→color，radius/spacing→number，font→string */
+function varTypeOf(type: PresetType): 'color' | 'number' | 'string' {
+  if (type === 'color') return 'color';
+  if (type === 'font') return 'string';
+  return 'number';
 }
 
-function presetMetaItems(doc: PenDocument): Record<string, Record<string, unknown>> {
+/** x-paintress.presets 的两半：items（token 元数据）与 groups（谱式） */
+function presetsMeta(doc: PenDocument): {
+  items: Record<string, Record<string, unknown>>;
+  groups: Record<string, PresetGroup>;
+} {
   const meta = (doc as Record<string, unknown>)['x-paintress'];
   const presets = isRecord(meta) ? meta['presets'] : undefined;
   const items = isRecord(presets) ? presets['items'] : undefined;
-  return isRecord(items) ? (items as Record<string, Record<string, unknown>>) : {};
+  return {
+    items: isRecord(items) ? (items as Record<string, Record<string, unknown>>) : {},
+    groups: presetGroupsOf(doc),
+  };
+}
+
+/** 写回 __preset.ptr：items 与 groups 必须一起写，否则改一条 token 会把谱式抹掉 */
+function writePresets(
+  path: string,
+  doc: PenDocument,
+  mtimeMs: number | undefined,
+  items: Record<string, Record<string, unknown>>,
+  groups: Record<string, PresetGroup>,
+): void {
+  const meta = (doc as Record<string, unknown>)['x-paintress'];
+  const metaObj = isRecord(meta) ? meta : {};
+  const next = {
+    ...doc,
+    ['x-paintress']: { ...metaObj, spec: '1', presets: { version: 1, items, groups } },
+  } as PenDocument;
+  saveDoc(path, next, { flavor: 'ptr', ...(mtimeMs !== undefined ? { expectedMtimeMs: mtimeMs } : {}) });
 }
 
 function emptyDoc(): PenDocument {
@@ -260,23 +318,12 @@ export function setPreset(from: string, input: SetPresetInput): PresetItem[] {
 
   const variables: Record<string, unknown> = { ...(doc.variables ?? {}) };
   variables[key] = { type: varTypeOf(input.type), value };
-  const metaItems = { ...presetMetaItems(doc) };
+  const { items, groups } = presetsMeta(doc);
+  const metaItems = { ...items };
   metaItems[key] = { type: input.type, ...(input.name !== undefined && input.name !== '' ? { name: input.name } : {}) };
 
-  const next = {
-    ...doc,
-    variables,
-    ['x-paintress']: {
-      ...((doc as Record<string, unknown>)['x-paintress'] as Record<string, unknown> | undefined),
-      spec: '1',
-      presets: { version: 1, items: metaItems },
-    },
-  } as PenDocument;
-
-  saveDoc(path, next, {
-    flavor: 'ptr',
-    ...(file !== null ? { expectedMtimeMs: file.mtimeMs } : {}),
-  });
+  const next = { ...doc, variables } as PenDocument;
+  writePresets(path, next, file?.mtimeMs, metaItems, groups);
   return readPresetFile(path)?.items ?? [];
 }
 
@@ -289,19 +336,73 @@ export function removePreset(from: string, key: string): PresetItem[] {
   const variables = { ...(file.doc.variables ?? {}) };
   if (!(key in variables)) return file.items;
   delete variables[key];
-  const metaItems = { ...presetMetaItems(file.doc) };
+  const { items, groups } = presetsMeta(file.doc);
+  const metaItems = { ...items };
   delete metaItems[key];
-  const next = {
-    ...file.doc,
-    variables,
-    ['x-paintress']: {
-      ...((file.doc as Record<string, unknown>)['x-paintress'] as Record<string, unknown> | undefined),
-      spec: '1',
-      presets: { version: 1, items: metaItems },
-    },
-  } as PenDocument;
-  saveDoc(path, next, { flavor: 'ptr', expectedMtimeMs: file.mtimeMs });
+  writePresets(path, { ...file.doc, variables } as PenDocument, file.mtimeMs, metaItems, groups);
   return readPresetFile(path)?.items ?? [];
+}
+
+export interface PresetGroupsResult {
+  path: string | null;
+  groups: Record<string, PresetGroup>;
+}
+
+/** 预设组列表（谱式）；没有项目文件就返回空 */
+export function listPresetGroups(from: string): PresetGroupsResult {
+  const path = presetPathFor(from);
+  if (path === null) return { path: null, groups: {} };
+  return { path, groups: presetGroupsOf(readPresetFile(path)?.doc ?? null) };
+}
+
+export interface SetPresetGroupInput {
+  name: string;
+  /** 适用的节点类型 */
+  target: string;
+  /** 属性 → `$token` 引用 */
+  props: Record<string, string>;
+}
+
+/** 新建 / 覆盖一个预设组；返回最新列表。from 可以是设计稿、预设文件或目录 */
+export function setPresetGroup(from: string, input: SetPresetGroupInput): PresetGroupsResult {
+  const name = input.name.trim();
+  if (name === '') throw new Error('预设组名字不能为空');
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error(`预设组名字只允许字母数字与 . _ -，收到：${name}`);
+  const target = input.target.trim();
+  if (target === '') throw new Error('预设组必须指定 target（节点类型，如 frame / text）');
+  const props: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input.props)) {
+    if (typeof value !== 'string' || value.trim() === '') continue;
+    props[key] = value.trim();
+  }
+  if (Object.keys(props).length === 0) throw new Error('预设组至少要有一个属性');
+
+  let path = presetPathFor(from);
+  if (path === null) {
+    const root = findProjectRoot(from) ?? projectDirOf(from);
+    ensureProjectScaffold(root);
+    path = join(root, PRESET_FILE);
+  }
+  const file = readPresetFile(path);
+  const doc: PenDocument = file?.doc ?? emptyDoc();
+  const { items, groups } = presetsMeta(doc);
+  const nextGroups: Record<string, PresetGroup> = { ...groups, [name]: { target, props } };
+  writePresets(path, doc, file?.mtimeMs, items, nextGroups);
+  return { path, groups: presetGroupsOf(readPresetFile(path)?.doc ?? null) };
+}
+
+/** 删一个预设组（不存在时什么都不做） */
+export function removePresetGroup(from: string, name: string): PresetGroupsResult {
+  const path = presetPathFor(from);
+  if (path === null) return { path: null, groups: {} };
+  const file = readPresetFile(path);
+  if (file === null) return { path, groups: {} };
+  const { items, groups } = presetsMeta(file.doc);
+  if (!(name in groups)) return { path, groups };
+  const nextGroups = { ...groups };
+  delete nextGroups[name];
+  writePresets(path, file.doc, file.mtimeMs, items, nextGroups);
+  return { path, groups: presetGroupsOf(readPresetFile(path)?.doc ?? null) };
 }
 
 /** 全树按 id 找节点（组件库、复制插入、画廊都用这一处） */

@@ -28,6 +28,7 @@ import {
   listComponents,
   listPresets,
   notePathFor,
+  listPresetGroups,
   presetPathFor,
   readTextIfExists,
   setPreset,
@@ -781,7 +782,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               return;
             }
             const { path, items } = listPresets(entry.rootReal);
-            sendJson(200, { ok: true, path, items });
+            sendJson(200, { ok: true, path, items, groups: listPresetGroups(entry.rootReal).groups });
             return;
           }
           if (req.method === 'PUT' || req.method === 'POST') {
@@ -814,7 +815,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             const existing = listPresets(entry.rootReal).items.find((p) => p.key === key);
             const typeRaw = body['type'] ?? existing?.type;
             if (!isPresetType(typeRaw)) {
-              sendJson(400, { ok: false, error: 'type 必须是 color 或 radius' });
+              sendJson(400, { ok: false, error: 'type 必须是 color / radius / spacing / font' });
               return;
             }
             const label = typeof body['name'] === 'string' && body['name'] !== '' ? body['name'] : undefined;
@@ -826,7 +827,12 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 ...(label !== undefined ? { name: label } : {}),
               });
               notifyRegistry();
-              sendJson(200, { ok: true, path: presetPathFor(entry.rootReal), items });
+              sendJson(200, {
+                ok: true,
+                path: presetPathFor(entry.rootReal),
+                items,
+                groups: listPresetGroups(entry.rootReal).groups,
+              });
             } catch (cause) {
               sendJson(400, { ok: false, error: cause instanceof Error ? cause.message : String(cause) });
             }

@@ -1,6 +1,7 @@
 import { makeVarResolver, expandRefs, type Warnings } from './index.js';
 import { renderTree, computeCanvas, boardBoxes, escapeAttr, type BoardBox } from './html.js';
 import type { PenDocument } from '../schema/index.js';
+import { applyPresetRefs, presetGroupsOf } from '../doc/presets.js';
 
 export type { BoardBox };
 
@@ -29,10 +30,12 @@ export function renderDocument(doc: PenDocument, opts: RenderOptions = {}): Rend
   const warnings: Warnings = [];
   const vars = makeVarResolver(doc, warnings);
   const expanded = expandRefs(doc, warnings);
-  const canvas = computeCanvas(expanded, vars);
-  const boards = boardBoxes(expanded, vars);
+  // 谱式：`preset: '<name>'` 的节点先铺组属性（节点自己的属性优先），再进布局与渲染
+  const withPresets = applyPresetRefs(expanded, presetGroupsOf(doc), warnings);
+  const canvas = computeCanvas(withPresets, vars);
+  const boards = boardBoxes(withPresets, vars);
   const title = opts.title ?? 'paintress render';
-  const body = renderTree(expanded, vars, warnings);
+  const body = renderTree(withPresets, vars, warnings);
   const html = [
     '<!DOCTYPE html>',
     '<html lang="zh-CN">',

@@ -21,6 +21,7 @@ import {
   type ComponentItem,
   type DaemonInfo,
   type Mark,
+  type PresetGroup,
   type PresetItem,
   type ProjectInfo,
 } from './api';
@@ -158,6 +159,7 @@ export default function App() {
   /** 人手动关掉属性面板后，本次会话不再自动弹（选中仍会刷新数据） */
   let inspectorDismissed = false;
   const [presets, setPresets] = createSignal<PresetItem[]>([]);
+  const [presetGroups, setPresetGroups] = createSignal<Record<string, PresetGroup>>({});
   const [components, setComponents] = createSignal<ComponentItem[]>([]);
   /** 关窗倒计时（秒）；null = 不显示遮罩 */
   const [countdown, setCountdown] = createSignal<number | null>(null);
@@ -354,7 +356,9 @@ export default function App() {
 
   async function loadPresets(project: string): Promise<void> {
     try {
-      setPresets((await fetchPresets(project)).items);
+      const res = await fetchPresets(project);
+      setPresets(res.items);
+      setPresetGroups(res.groups ?? {});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -375,6 +379,7 @@ export default function App() {
     try {
       const res = await setPresetValue(p, key, value);
       setPresets(res.items);
+      setPresetGroups(res.groups ?? {});
       setReloadKey((n) => n + 1);
       setError(null);
     } catch (cause) {
@@ -1360,6 +1365,7 @@ export default function App() {
               <Show when={panel() === 'presets'}>
                 <PresetPanel
                   items={presets()}
+                  groups={presetGroups()}
                   labels={{
                     title: m().presets,
                     close: m().closePanel,
@@ -1367,6 +1373,10 @@ export default function App() {
                     hint: m().presetHint,
                     color: m().presetColor,
                     radius: m().presetRadius,
+                    spacing: m().presetSpacing,
+                    font: m().presetFont,
+                    groups: m().presetGroups,
+                    groupsEmpty: m().presetGroupsEmpty,
                   }}
                   onClose={() => setPanel(null)}
                   onSet={(key, value) => void applyPreset(key, value)}
