@@ -4,6 +4,7 @@ import { attachPersistent, queryDaemon, sendRequest, type AttachHandle } from '.
 import { ensureDaemon } from './spawn.js';
 import { deriveProjectName, sanitizeProjectName } from './paths.js';
 import { openBrowser, projectUrl } from './open-browser.js';
+import type { AccessInfo } from './bind.js';
 
 /**
  * 把 agent 的项目交给 web 查看器 —— **幂等**，可以每次都无条件调用。
@@ -27,6 +28,12 @@ export interface ViewerInfo {
   port: number;
   /** 人可以直接打开的地址（项目深链） */
   url: string;
+  /**
+   * 最终监听地址与宿主可达性。
+   * agent 的控制面是 Unix socket，不受端口/绑定影响；这里只回答「给人打开的地址」。
+   * `bind: 'all'` 时 `url` 用的是 WSL 网卡地址 —— 宿主 localhost 转发不通必须告诉人。
+   */
+  access: AccessInfo;
   /** 本次调用是否真的拉起了 daemon */
   startedDaemon: boolean;
 }
@@ -94,13 +101,14 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
       root: dir,
       pid: running.pid,
       port: running.port,
-      url: projectUrl(running.port, project),
+      url: projectUrl({ port: running.port, host: running.access.host }, project),
+      access: running.access,
       startedDaemon: false,
     };
   }
 
   // 子进程不自弹窗口：由下面用「项目深链」弹一次，避免落到项目列表、也避免开两个标签页
-  const { started, pid, port } = await ensureDaemon({ noOpen: true });
+  const { started, pid, port, access } = await ensureDaemon({ noOpen: true });
   const watched = await sendRequest(
     { kind: 'watch', project, dir, owner: 'agent', ...(opts.depth !== undefined ? { depth: opts.depth } : {}) },
     8000,
@@ -114,8 +122,9 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   await syncProjectRoots();
 
   // 只在「本次拉起 daemon」时开一次窗口，并直接落在自己的项目上
-  if (started) openBrowser(projectUrl(port, project));
-  return { project, root: dir, pid, port, url: projectUrl(port, project), startedDaemon: started };
+  const url = projectUrl({ port, host: access.host }, project);
+  if (started) openBrowser(url);
+  return { project, root: dir, pid, port, url, access, startedDaemon: started };
 }
 
 /**

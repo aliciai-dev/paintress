@@ -356,6 +356,13 @@ export const TOOLS: Record<string, ToolDef> = {
       });
       // 项目根与两个关键文件：agent 不需要自己找、更不该自己另建
       const designSystem = projectFilesInfo(info.root, { ensure: true });
+      // 端口/绑定若与默认不同，必须明说：agent 会把人引到这个 url 上
+      let note: string | undefined;
+      if (info.access.bind === 'all') {
+        note = `宿主 localhost 转发不可用，查看器已绑 0.0.0.0；给人打开的地址用返回的 url（${info.url}），不要用 localhost。`;
+      } else if (info.access.jumped) {
+        note = `默认端口 ${info.access.requestedPort} 不可用，查看器起在 ${info.port}；给人打开的地址是 ${info.url}。`;
+      }
       return {
         ok: true,
         project: info.project,
@@ -363,6 +370,8 @@ export const TOOLS: Record<string, ToolDef> = {
         url: info.url,
         pid: info.pid,
         port: info.port,
+        access: info.access,
+        ...(note !== undefined ? { note } : {}),
         started: info.startedDaemon,
         designSystem,
       };

@@ -44,7 +44,9 @@ describe('幂等判据', () => {
 
   it('ensureDaemon 复用已有实例：started=false，pid/端口不变', async () => {
     const res = await ensureDaemon();
-    expect(res).toEqual({ started: false, pid: daemon.pid, port: daemon.port });
+    expect(res).toMatchObject({ started: false, pid: daemon.pid, port: daemon.port });
+    // 复用同样带回 access：人拿到的 url 必须是 daemon 自报的那个
+    expect(res.access.url).toBe(`http://localhost:${daemon.port}/`);
   });
 
   it('reuseDaemon：同端口复用，指定了别的端口则明确报错', async () => {

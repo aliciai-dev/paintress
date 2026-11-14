@@ -112,19 +112,28 @@ export function openBrowser(url: string, ctx: LauncherContext = {}): boolean {
   }
 }
 
-/** 顶层页面地址（项目列表）；项目深链见 projectUrl */
-export function baseUrl(port: number): string {
-  return `http://localhost:${port}/`;
+/** 顶层页面地址（项目列表）；`host` 由绑定结果决定（`all` 模式下是宿主要用的网卡地址） */
+export interface ViewerOrigin {
+  port: number;
+  host: string;
+}
+
+const originOf = (o: number | ViewerOrigin): ViewerOrigin => (typeof o === 'number' ? { port: o, host: 'localhost' } : o);
+
+export function baseUrl(o: number | ViewerOrigin): string {
+  const { port, host } = originOf(o);
+  return `http://${host}:${port}/`;
 }
 
 /** 项目深链：项目 key 本身就带 `/`（`c-thun/raybend`），URL 里不需要转义 */
-export function projectUrl(port: number, project?: string, file?: string): string {
-  if (!project) return baseUrl(port);
+export function projectUrl(o: number | ViewerOrigin, project?: string, file?: string): string {
+  const { port, host } = originOf(o);
+  if (!project) return baseUrl(o);
   const path = project
     .split('/')
     .filter((s) => s !== '')
     .map(encodeURIComponent)
     .join('/');
   const qs = file ? `?file=${encodeURIComponent(file)}` : '';
-  return `http://localhost:${port}/${path}${qs}`;
+  return `http://${host}:${port}/${path}${qs}`;
 }

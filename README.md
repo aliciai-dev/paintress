@@ -81,7 +81,8 @@ paintress component list|insert|add ...                  project component libra
 paintress render <file> <out.html>                      write the canvas as HTML
 paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  render to PNG (default 0.8)
 
-paintress web [--port n] [--idle ms] [--foreground]   ensure the viewer is running (idempotent, returns at once)
+paintress web [--port n] [--bind auto|loopback|all] [--idle ms] [--foreground]
+                                                        ensure the viewer is running (idempotent, returns at once)
 paintress ping | status | stop                          viewer control
 paintress watch <name> <dir> [--depth n] | unwatch <name>  register a directory to browse
 paintress attach <name>                                 keep the viewer alive while an agent works
@@ -96,12 +97,14 @@ paintress mcp-config <client>                           print the config snippet
 ```bash
 paintress web
 paintress watch demo ./demo
-# open http://localhost:3316/demo
+# open http://localhost:6033/demo
 ```
 
 `paintress web` is idempotent and returns immediately: if a viewer is already running it prints that process's `pid` / `port` / `http`, otherwise it starts one and opens the viewer window on it. Either way the command is safe to run before every drawing session — there is never a second instance, and the window is opened by the program, in the desktop browser (`--foreground` keeps the process attached to your shell when you want its log; `paintress stop` is how you replace a running viewer, e.g. on another port). Under WSL the window lands in the Windows browser, never in a browser inside the distro.
 
-Agents get the same guarantee from the MCP side: `paintress_viewer` ensures the viewer and registers the current project, and the MCP server re-checks it before every write, so the viewer is up before the first edit instead of after someone asks.
+The port is not a constant you should memorize: it is **chosen at startup and reported back**. The default is `6033`; if that port is unusable the viewer walks `6033 → 6133 → 6233` on `127.0.0.1`, and if none of them can be reached from the host it re-binds the same three ports on `0.0.0.0` (six candidates, first usable one wins, otherwise it fails with the full attempt table). Under WSL this matters: Windows can reserve a port for Hyper-V, in which case `localhost` forwarding is never created and the human's browser sees "connection refused" while everything inside the distro works — the fallback then hands you `http://<wsl-ip>:6033/` instead. The `http` / `access.url` field is authoritative: print it, do not rebuild it. `--port` pins one port and never jumps (a busy port is an error), `--bind loopback|all` pins the interface.
+
+Agents get the same guarantee from the MCP side: `paintress_viewer` ensures the viewer and registers the current project, and the MCP server re-checks it before every write, so the viewer is up before the first edit instead of after someone asks. Its result carries the same `url` / `access` block, so an agent that started the viewer on a fallback port tells the human the address that actually works.
 
 A design file that has a sibling Markdown file of the same name (`home.ptr` → `home.md`) gets a notes button in the top-left corner of the canvas. Click it and the canvas narrows to make room for the note: what the design is for, what is still open, which requirement it answers. The note is a plain Markdown file next to the design — write it yourself or let the agent write it; the panel is read-only.
 
@@ -109,7 +112,7 @@ The rail in the top-right corner holds the project's design system. **Presets** 
 
 Canvas navigation: wheel zooms at the pointer, space / middle button / empty area drags to pan, `Ctrl/Cmd+0` returns to 100%, `Shift+1` fits the window, and `Ctrl/Cmd+K` quickly switches design files. Selecting a node opens a read-only inspector. Files with more than one board get a board strip; the active board can be exported as PNG at 0.5x / 1x / 2x (1x means its design pixels; the file is `<design>-<board>@<scale>x.png` and is scaled back when either edge exceeds 8192px). Edits made through the CLI or MCP are highlighted in the viewer, and clicks assign short ids that the agent can read back with `paintress_marks`; each mark carries the file and node id, so a shorthand resolves to one element in one file.
 
-Projects are named after their directory path (`c-thun/raybend`), so the URL reads like the path: `http://localhost:3316/c-thun/raybend?file=design/editor.pen`. Project rows have an **×** on hover that unbinds the project (design files are untouched; an agent re-registers on its next start), and **Stop server** in the sidebar footer shuts the viewer process down — both ask for confirmation first.
+Projects are named after their directory path (`c-thun/raybend`), so the URL reads like the path: `http://localhost:6033/c-thun/raybend?file=design/editor.pen`. Project rows have an **×** on hover that unbinds the project (design files are untouched; an agent re-registers on its next start), and **Stop server** in the sidebar footer shuts the viewer process down — both ask for confirmation first.
 
 The viewer follows the agent instead of asking you to manage it. When an agent starts the viewer it opens your browser on that agent's own project — nothing for the agent to run twice, nothing for you to open by hand; projects appear and leave with a short animation as agents come and go. When the last project is gone **or the server is stopped** (the sidebar's Stop server, an idle exit), the page counts down ten seconds and closes its own window — you never have to close the tab by hand. A browser that nobody is looking at no longer keeps the process alive.
 

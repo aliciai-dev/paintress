@@ -9,6 +9,7 @@ import { startDaemon, type DaemonHandle } from './web/daemon.js';
 import { isDaemonRunning, sendRequest, attachPersistent, queryDaemon } from './web/client.js';
 import { findProjectRoot, projectFilesInfo, setProjectRoots } from './doc/project.js';
 import { ensureDaemon, reuseDaemon } from './web/spawn.js';
+import { diagnoseNetwork, type AccessInfo } from './web/bind.js';
 import {
   CLIENTS,
   findClient,
@@ -52,7 +53,7 @@ import { VERSION } from './shared/version.js';
  *   paintress component list [dir]                    项目组件库列表
  *   paintress component insert <file> <id>            把组件复制进设计稿
  *   paintress component add <file> <id>               把设计稿子树上收为组件
- *   paintress web [--port n] [--idle ms] [--foreground]  确保 web 在跑，立刻返回（幂等）
+ *   paintress web [--port n] [--bind auto|loopback|all] [--idle ms] [--foreground]  确保 web 在跑，立刻返回（幂等）
  *   paintress web --foreground                       占住终端跑（日志直接可见）
  *   paintress ping                                    检查 web 是否在运行
  *   paintress status                                  查看已注册项目
@@ -73,7 +74,7 @@ export interface ParsedCommand {
 
 const NO_OPEN_FLAG = 'no-open';
 
-const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', 'preview', 'note', 'metrics', 'embed-fonts', NO_OPEN_FLAG]);
+const FLAG_KEYS = new Set(['type', 'name', 'regex', 'id', 'reusable', 'depth', 'index', 'scale', 'port', 'bind', 'idle', 'foreground', 'daemon', 'dry-run', 'opencode-layout', 'width', 'height', 'fill', 'layout', 'padding', 'gap', 'force', 'board', 'parent', 'apply', 'min-uses', 'key', 'group', 'prop', 'value', 'preview', 'note', 'metrics', 'embed-fonts', NO_OPEN_FLAG]);
 /** `daemon` 只是历史别名：默认行为已经是后台，留着不报错 */
 const BOOLEAN_FLAGS = new Set(['regex', 'reusable', 'foreground', 'daemon', 'dry-run', 'force', 'apply', 'embed-fonts', NO_OPEN_FLAG]);
 
@@ -113,6 +114,32 @@ function currentLaunchCommand(): LaunchCommand {
     exists: (p) => existsSync(p),
     realpath: (p) => realpathSync(p),
   });
+}
+
+/** CLI 输出的 `http` 字段保持历史形态（不带结尾斜杠）；`access.url` 仍带斜杠作为基地址 */
+function httpOf(access: AccessInfo): string {
+  return access.url.replace(/\/$/, '');
+}
+
+/** `paintress doctor` 的「当前 daemon 实况」：没跑就是 null，不拉起进程 */
+async function daemonSnapshot(): Promise<{ pid: number; port: number; url: string; bind: string; windows: string; jumped: boolean } | null> {
+  const info = await queryDaemon(500);
+  if (info === null) return null;
+  return {
+    pid: info.pid,
+    port: info.port,
+    url: info.access.url,
+    bind: info.access.bind,
+    windows: info.access.windows,
+    jumped: info.access.jumped,
+  };
+}
+
+/** `--bind` 只接受三种取值：auto（默认，走端口阶梯）、loopback、all */
+function parseBind(v: string | undefined): 'auto' | 'loopback' | 'all' | undefined {
+  if (v === undefined) return undefined;
+  if (v === 'auto' || v === 'loopback' || v === 'all') return v;
+  throw new Error(`--bind 只接受 auto|loopback|all，收到：${v}`);
 }
 
 function flagStr(f: Record<string, string | boolean>, key: string): string | undefined {
@@ -301,7 +328,15 @@ export async function main(argv: string[]): Promise<number> {
         const backup = plan.status === 'noop' ? null : applyPlan(path, plan.next, dryRun).backup;
         results.push({ client: spec.id, path, status: plan.status, detail: plan.detail, backup, dryRun });
       }
-      console.log(JSON.stringify({ ok: true, launch, results }, null, 2));
+      console.log(
+        JSON.stringify(
+          cmd === 'doctor'
+            ? { ok: true, launch, results, net: await diagnoseNetwork(), daemon: await daemonSnapshot() }
+            : { ok: true, launch, results },
+          null,
+          2,
+        ),
+      );
       return 0;
     }
     if (cmd === 'attach') {
@@ -323,16 +358,25 @@ export async function main(argv: string[]): Promise<number> {
     if (cmd === 'web') {
       const port = flagNum(flags, 'port');
       const idle = flagNum(flags, 'idle');
+      const bind = parseBind(flagStr(flags, 'bind'));
       // --no-open：不想被弹浏览器时用（CI、远程、只想拿 URL 给人）
       const noOpen = flags[NO_OPEN_FLAG] === true || process.env['PAINTRESS_NO_OPEN'] === '1';
-      const url = (p: number): string => `http://localhost:${p}`;
+      // http 一律取 daemon 自报的 access.url：端口可能被跳级、绑定可能是 0.0.0.0
       // 幂等：已经在跑就复用它（打印 pid/端口/URL 后立刻返回），绝不起第二个进程。
-      // 这是「开始作画前先确保 web 在跑」可以无条件调用的前提。
       const running = await reuseDaemon(port);
       if (running !== null) {
         console.log(
           JSON.stringify(
-            { ok: true, daemon: true, reused: true, pid: running.pid, port: running.port, http: url(running.port), designSystem: cwdDesignSystem() },
+            {
+              ok: true,
+              daemon: true,
+              reused: true,
+              pid: running.pid,
+              port: running.port,
+              http: httpOf(running.access),
+              access: running.access,
+              designSystem: cwdDesignSystem(),
+            },
             null,
             2,
           ),
@@ -345,12 +389,22 @@ export async function main(argv: string[]): Promise<number> {
       if (flags['foreground'] !== true) {
         const res = await ensureDaemon({
           ...(port !== undefined ? { port } : {}),
+          ...(bind !== undefined ? { bind } : {}),
           ...(idle !== undefined ? { idleTimeoutMs: idle } : {}),
           noOpen,
         });
         console.log(
           JSON.stringify(
-            { ok: true, daemon: true, reused: !res.started, pid: res.pid, port: res.port, http: url(res.port), designSystem: cwdDesignSystem() },
+            {
+              ok: true,
+              daemon: true,
+              reused: !res.started,
+              pid: res.pid,
+              port: res.port,
+              http: httpOf(res.access),
+              access: res.access,
+              designSystem: cwdDesignSystem(),
+            },
             null,
             2,
           ),
@@ -362,6 +416,7 @@ export async function main(argv: string[]): Promise<number> {
       try {
         handle = await startDaemon({
           ...(port !== undefined ? { port } : {}),
+          ...(bind !== undefined ? { bind } : {}),
           ...(idle !== undefined ? { idleTimeoutMs: idle } : {}),
           // 人手动起的实例给一分钟窗口去 watch；agent 自动起的走默认的 3s 快速收尾
           emptyGraceMs: 60_000,
@@ -372,15 +427,18 @@ export async function main(argv: string[]): Promise<number> {
         const again = await queryDaemon();
         if (again === null) throw cause;
         console.log(
-          JSON.stringify({ ok: true, daemon: true, reused: true, pid: again.pid, port: again.port, http: url(again.port) }, null, 2),
+          JSON.stringify(
+            { ok: true, daemon: true, reused: true, pid: again.pid, port: again.port, http: httpOf(again.access), access: again.access },
+            null,
+            2,
+          ),
         );
         return 0;
       }
-      const http = url(handle.port);
-      console.log(JSON.stringify({ ok: true, pid: handle.pid, port: handle.port, http }, null, 2));
+      console.log(JSON.stringify({ ok: true, pid: handle.pid, port: handle.port, http: httpOf(handle.access), access: handle.access }, null, 2));
       if (!noOpen) {
         const { openBrowser } = await import('./web/open-browser.js');
-        openBrowser(`${http}/`);
+        openBrowser(handle.access.url);
       }
       // 不返回：server 保持打开，事件循环非空 → 进程常驻
       await new Promise<void>((resolve) => {

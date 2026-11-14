@@ -81,7 +81,8 @@ paintress component list|insert|add ...                 项目组件库
 paintress render <file> <out.html>                     渲染为 HTML
 paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  渲染为 PNG（默认 0.8）
 
-paintress web [--port n] [--idle ms] [--foreground]  确保查看器在跑（幂等，立刻返回）
+paintress web [--port n] [--bind auto|loopback|all] [--idle ms] [--foreground]
+                                                       确保查看器在跑（幂等，立刻返回）
 paintress ping | status | stop                         查看器控制
 paintress watch <name> <dir> [--depth n] | unwatch <name>  注册/移除要浏览的目录
 paintress attach <name>                                agent 工作期间保持查看器存活
@@ -96,12 +97,14 @@ paintress mcp-config <client>                          打印单个客户端的�
 ```bash
 paintress web
 paintress watch demo ./demo
-# 打开 http://localhost:3316/demo
+# 打开 http://localhost:6033/demo
 ```
 
 `paintress web` 是幂等的、且立刻返回：已经在跑就打印那个进程的 `pid` / `port` / `http`，没跑就拉起一个并把查看器窗口开在它上面。所以每次开始作画前无条件跑一遍都没问题——永远不会出现第二个实例；窗口由程序自己开在桌面浏览器里（`--foreground` 让进程占住终端、日志直接可见；要换端口/重启，用 `paintress stop`）。在 WSL 里窗口落在 Windows 的浏览器，不会是发行版里的那个浏览器。
 
-agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在跑并把当前项目注册进去，MCP server 还会在每次写操作前再确认一遍——于是查看器是在第一次编辑之前就起来的，而不是等人开口。
+端口不是一个要背下来的常量：它在启动时**选好并报回来**。默认 `6033`；用不了就沿 `6033 → 6133 → 6233` 在 `127.0.0.1` 上跳级，三个都到不了宿主就改绑 `0.0.0.0` 再走一遍同样三个端口（共六个候选，第一个可用的胜出，全灭就带着完整尝试表报错）。WSL 里这条很重要：Windows 可能把端口划给 Hyper-V，此时 `localhost` 转发根本不会建立——发行版里一切正常，人在宿主浏览器里只看到「连接失败」；兜底会把 `http://<wsl-ip>:6033/` 交给你。`http` / `access.url` 字段是权威值：直接用它，不要自己拼。`--port` 钉死一个端口、绝不跳级（被占就是报错），`--bind loopback|all` 钉死绑定面。
+
+agent 从 MCP 侧拿到同样的保证：`paintress_viewer` 确保查看器在跑并把当前项目注册进去，MCP server 还会在每次操作前再确认一遍——于是查看器是在第一次编辑之前就起来的，而不是等人开口。它的返回值里带着同一份 `url` / `access`，所以就算查看器落在了兜底端口上，agent 也会把人引到真正能打开的地址。
 
 设计稿旁边放一份同名 Markdown（`home.ptr` → `home.md`），画布左上角就会出现「笔记」按钮。点开后画布向右收窄、左侧切出笔记：这份设计是干什么的、还有哪些待定、对应哪条需求。笔记就是设计稿旁边的一份普通 Markdown——您自己写，或者让 agent 写；面板本身只读。
 

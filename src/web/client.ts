@@ -1,6 +1,7 @@
 import { connect, type Socket } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { LineDecoder, encodeLine, type ClientRequest, type ServerResponse } from './protocol.js';
+import type { AccessInfo } from './bind.js';
 import { socketPath, pidPath } from './paths.js';
 
 /** 控制面客户端：一次请求/响应，或保持长连接（attach 用） */
@@ -14,6 +15,21 @@ export interface DaemonInfo {
   pid: number;
   port: number;
   uptimeMs: number;
+  /** 最终监听在哪儿、宿主能不能访问；旧版 daemon 不回这个字段时按本机 loopback 补 */
+  access: AccessInfo;
+}
+
+/** 旧版 daemon（未上报 access）的兼容值：当作本机 loopback 可用 */
+function legacyAccess(port: number): AccessInfo {
+  return {
+    url: `http://localhost:${port}/`,
+    host: 'localhost',
+    bind: 'loopback',
+    windows: 'skipped',
+    jumped: false,
+    requestedPort: port,
+    attempts: [],
+  };
 }
 
 /**
@@ -24,9 +40,11 @@ export async function queryDaemon(timeoutMs = 2000): Promise<DaemonInfo | null> 
   if (!isDaemonRunning()) return null;
   try {
     const res = await sendRequest({ kind: 'ping' }, timeoutMs);
-    if (res.ok && 'pong' in res) return { pid: res.pid, port: res.port, uptimeMs: res.uptimeMs };
+    if (res.ok && 'pong' in res) {
+      return { pid: res.pid, port: res.port, uptimeMs: res.uptimeMs, access: res.access ?? legacyAccess(res.port) };
+    }
   } catch {
-    /* 残留 socket / 半死进程：当作未运行，交给启动路径处理 */
+    /* 残留 socket / 半死的进程：当作未运行，交给启动路径处理 */
   }
   return null;
 }

@@ -143,3 +143,16 @@
 - **后果**：截图与徽章能说清「谁加载了、谁用了替代」；旧稿会从 Times/宋体变成 Inter/Noto（有意的观感修正）；测试通过 `PAINTRESS_NO_WEB_FONTS=1` 与外网解耦。
 - **证据**：`specs/fonts.md`、`specs/design-system.md`、`.agents/implementations/2026-11-15_0132_font-registry.md`。
 - **日期**：2026-11-15
+
+### D-012 — 监听端口不是常量：启动时选端口，并把人该用的地址报回来
+
+- **背景**（2026-11-15 实测）：`paintress web` 起得来、WSL 内 `curl` 200，但宿主（Windows）浏览器「连接失败」。原因是 WSL2 的 `localhost` 转发由宿主侧 `wslrelay.exe` 落地：Windows 上这个端口被 Hyper-V 保留段占着（`3228–3327`），绑不上就不建转发；而保留段每次开机在动态端口范围内重划、位置会漂。这类失败在发行版内部完全不可观测（自测永远通过）。
+- **决定**：
+  1. 默认端口 **6033**（60 号肉身成圣远征队 + 33 号远征队），不再用 3316；
+  2. 顺序固定为「宿主体检 → 选端口 → 起服务 → 端到端复核」，不采用「先起再拆」；复核只认本次进程的 nonce，不认 200；
+  3. 候选：`127.0.0.1 × [6033,6133,6233]` → `0.0.0.0 × [6033,6133,6233]`，最多 6 次，冲突（本机占用 / 宿主保留段 / 宿主占用 / 转发不通）一律换下一个；
+  4. 显式 `--port` 不跳级（被占直接报错），`--bind loopback|all` 钉死绑定面；`port: 0` 跳过宿主校验；
+  5. 最终 `access{url,host,bind,windows,jumped,requestedPort,attempts}` 随 `pong` 上报，CLI / MCP / 页面一律用它，**不许自己拼 localhost**。
+- **后果**：默认 URL 从 3316 变 6033；跳级或 `bind=all` 时给人打开的地址可能是 `http://<wsl-ip>:6033/`；`0.0.0.0` 会暴露到局域网（沿用「本地工具、不做鉴权」的既有立场，只在输出与文档明示）；`ensureDaemon` 等待上限 6s → 15s。
+- **证据**：`specs/web-bind-ladder.md`、`test/bind-ladder.spec.ts`、`.agents/implementations/`（本轮变更记录）。
+- **日期**：2026-11-15

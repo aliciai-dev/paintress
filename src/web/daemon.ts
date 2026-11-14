@@ -1,4 +1,4 @@
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse as NodeServerResponse } from 'node:http';
 import { VERSION } from '../shared/version.js';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import {
@@ -37,9 +37,7 @@ import {
   type PresetType,
 } from '../doc/project.js';
 import { planFonts } from '../doc/fonts.js';
-
-
-const DEFAULT_PORT = 3316;
+import { bindWithFallback, DEFAULT_PORT, type AccessInfo, type BindPreference, type Endpoint } from './bind.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -134,6 +132,11 @@ export interface DaemonOptions {
   autoDetachMs?: number;
   /** 是否向 npm registry 探测新版本（默认关；由 CLI 开启，测试不碰网络） */
   updateCheck?: boolean;
+  /**
+   * 绑定偏好：auto（默认，走端口阶梯）、loopback（只绑 127.0.0.1）、all（只绑 0.0.0.0）。
+   * WSL 里宿主 localhost 转发被保留段挡住时，all 是兜底：宿主直连网卡地址。
+   */
+  bind?: BindPreference;
   /** 测试用：不写死端口 */
   quiet?: boolean;
 }
@@ -143,6 +146,8 @@ export interface DaemonHandle {
   pid: number;
   close(): Promise<void>;
   readonly registry: Registry;
+  /** 最终监听在哪儿、宿主能不能访问 —— 要原样交给 agent 和 CLI */
+  readonly access: AccessInfo;
 }
 
 function isAlive(pid: number): boolean {
@@ -300,6 +305,12 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const watchers = new WatchManager();
   const versions = new VersionChecker();
   const startedAt = Date.now();
+  /** 身份串：宿主侧探测必须回显它，避免「端口上蹲着别的程序」被当成成功 */
+  const instanceNonce = randomUUID();
+  /** 绑定结果；ping 只能发生在 listen 之后（socket 服务更晚），先用占位值初始化 */
+  let port = 0;
+  let accessInfo: AccessInfo | null = null;
+  let endpoint: Endpoint | null = null;
   const idleTimeoutMs = opts.idleTimeoutMs ?? 60_000;
   // 空仓收尾默认 3s；调用方显式给了更短的 idle 时听它的（否则测试/嵌入场景要白等 3s）
   const emptyGraceMs = opts.emptyGraceMs ?? Math.min(idleTimeoutMs, 3_000);
@@ -446,7 +457,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         try {
           switch (req.kind) {
             case 'ping':
-              reply({ ok: true, pong: true, pid: process.pid, port, uptimeMs: Date.now() - startedAt, projects: registry.all().length });
+              reply({ ok: true, pong: true, pid: process.pid, port, uptimeMs: Date.now() - startedAt, projects: registry.all().length, ...(accessInfo !== null ? { access: accessInfo } : {}) });
               break;
             case 'status':
               reply({
@@ -561,7 +572,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
 
   const uiDist = findUiDist();
 
-  const httpServer: HttpServer = createHttpServer(async (req, res) => {
+  const handleHttp = async (req: IncomingMessage, res: NodeServerResponse): Promise<void> => {
     lastHttpAt = Date.now();
     const url = new URL(req.url ?? '/', 'http://localhost');
     const segments = url.pathname.split('/').filter((s) => s !== '');
@@ -589,6 +600,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     try {
       // ---------- JSON API ----------
       if (segments[0] === 'api') {
+        // 探针：只回答「这个进程还在、且这是它」。宿主侧可达性复核与 doctor 都靠它。
+        if (segments[1] === 'ping' && segments.length === 2) {
+          sendJson(200, {
+            ok: true,
+            pong: true,
+            pid: process.pid,
+            nonce: instanceNonce,
+            port,
+            bind: endpoint === null ? 'loopback' : endpoint.bind,
+          });
+          return;
+        }
         if (segments[1] === 'projects' && segments.length === 2) {
           sendJson(200, {
             ok: true,
@@ -1229,19 +1252,26 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     } catch (cause) {
       send(500, layout('错误', `<h1>500</h1><pre>${esc(cause instanceof Error ? cause.message : String(cause))}</pre>`));
     }
-  });
+  };
 
-  const desiredPort = opts.port ?? DEFAULT_PORT;
-  const port = await new Promise<number>((resolve, reject) => {
-    httpServer.once('error', (err) => {
-      const e = err as NodeJS.ErrnoException;
-      reject(e.code === 'EADDRINUSE' ? new Error(`端口 ${desiredPort} 已被占用；可用 --port 指定其他端口`) : err);
+  let bound: Awaited<ReturnType<typeof bindWithFallback>>;
+  try {
+    bound = await bindWithFallback({
+      create: () => createHttpServer(handleHttp),
+      nonce: instanceNonce,
+      ...(opts.port !== undefined ? { requestedPort: opts.port } : {}),
+      ...(opts.bind !== undefined ? { bind: opts.bind } : {}),
+      ...(opts.quiet === true ? {} : { log: (line: string) => process.stderr.write(`paintress web: ${line}\n`) }),
     });
-    httpServer.listen(desiredPort, '127.0.0.1', () => {
-      const addr = httpServer.address();
-      resolve(typeof addr === 'object' && addr !== null ? addr.port : desiredPort);
-    });
-  });
+  } catch (cause) {
+    // 起不来就不能把单实例锁留在地上：否则下一次启动会被「已在运行」挡住
+    releaseLock();
+    throw cause;
+  }
+  const httpServer = bound.server;
+  port = bound.endpoint.port;
+  endpoint = bound.endpoint;
+  accessInfo = bound.access;
 
   const sock = socketPath();
   try {
@@ -1249,12 +1279,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   } catch {
     /* ignore */
   }
-  await new Promise<void>((resolve, reject) => {
-    sockServer.once('error', reject);
-    sockServer.listen(sock, () => {
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      sockServer.once('error', reject);
+      sockServer.listen(sock, () => {
+        resolve();
+      });
     });
-  });
+  } catch (cause) {
+    httpServer.close();
+    releaseLock();
+    throw cause;
+  }
 
   /**
    * 生命周期策略：控制权在 agent 侧，人不需要管进程在不在。
@@ -1341,5 +1377,13 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     return closingPromise;
   }
 
-  return { port, pid: process.pid, close: () => shutdown('close'), registry };
+  return { port, pid: process.pid, close: () => shutdown('close'), registry, access: accessInfo ?? {
+    url: `http://localhost:${port}/`,
+    host: 'localhost',
+    bind: 'loopback',
+    windows: 'skipped',
+    jumped: false,
+    requestedPort: opts.port ?? DEFAULT_PORT,
+    attempts: [],
+  } };
 }

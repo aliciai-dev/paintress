@@ -1,4 +1,5 @@
 import type { Mark } from './marks.js';
+import type { AccessInfo } from './bind.js';
 
 /** 控制面协议：CLI ↔ daemon（Unix socket，换行分隔 JSON） */
 
@@ -30,13 +31,13 @@ export interface ProjectInfo {
 }
 
 export type ServerResponse =
-  | { ok: true; pid: number; uptimeMs: number; projects: ProjectInfo[]; version: string }
+  | { ok: true; pid: number; uptimeMs: number; projects: ProjectInfo[]; version: string; access?: AccessInfo }
   | { ok: true; project: ProjectInfo }
   | { ok: true; attached: true; project: string }
   | { ok: true; detached: true; project: string }
   | { ok: true; watched: true; project: ProjectInfo }
   | { ok: true; unwatched: boolean }
-  | { ok: true; pong: true; pid: number; port: number; uptimeMs: number; projects: number }
+  | { ok: true; pong: true; pid: number; port: number; uptimeMs: number; projects: number; access?: AccessInfo }
   | { ok: true; marks: Mark[] }
   | { ok: true; mark: Mark }
   | { ok: true; cleared: number }

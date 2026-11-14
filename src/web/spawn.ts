@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { daemonPid, queryDaemon, type DaemonInfo } from './client.js';
+import type { AccessInfo, BindPreference } from './bind.js';
 
 /**
  * 拉起后台 daemon（唯一实例）。
@@ -18,16 +19,19 @@ export interface EnsureDaemonResult {
   pid: number;
   /** 监听端口（来自 daemon 自己，端口冲突/自定义端口时也准确） */
   port: number;
+  /** 最终监听地址与宿主可达性（端口跳级、绑 0.0.0.0 都体现在这里） */
+  access: AccessInfo;
 }
 
 export interface EnsureDaemonOptions {
   port?: number;
+  bind?: BindPreference;
   idleTimeoutMs?: number;
   /** 拉起进程时不自动打开浏览器（CI、远程、只想拿 URL 给人） */
   noOpen?: boolean;
 }
 
-const START_TIMEOUT_MS = 6000;
+const START_TIMEOUT_MS = 15_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -62,12 +66,13 @@ function timeoutHint(): string {
 
 export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
   const running = await reuseDaemon(opts.port);
-  if (running !== null) return { started: false, pid: running.pid, port: running.port };
+  if (running !== null) return { started: false, pid: running.pid, port: running.port, access: running.access };
 
   const entry = process.argv[1];
   if (!entry) throw new Error('无法确定 CLI 入口路径，不能后台启动 daemon');
   const args = [entry, 'web', '--foreground'];
   if (opts.port !== undefined) args.push('--port', String(opts.port));
+  if (opts.bind !== undefined) args.push('--bind', opts.bind);
   if (opts.idleTimeoutMs !== undefined) args.push('--idle', String(opts.idleTimeoutMs));
   if (opts.noOpen === true) args.push('--no-open');
 
@@ -87,7 +92,7 @@ export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<Ensu
       if (opts.port !== undefined && info.port !== opts.port) {
         throw new Error(`daemon 起在端口 ${info.port} 而不是请求的 ${opts.port}；先 paintress stop 再重试`);
       }
-      return { started: true, pid: info.pid, port: info.port };
+      return { started: true, pid: info.pid, port: info.port, access: info.access };
     }
     if (exitCode !== null) {
       throw new Error(`后台 daemon 启动失败（退出码 ${exitCode}）${timeoutHint()}`);

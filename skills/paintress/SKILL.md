@@ -105,8 +105,10 @@ paintress web
 paintress watch <name> <dir>    # register a directory that lives outside the project
 ```
 
-- project list: `http://localhost:3316/`
-- one document: `http://localhost:3316/<name>?file=<relative/path>`
+- project list: `http://localhost:6033/`
+- one document: `http://localhost:6033/<name>?file=<relative/path>`
+
+**Never hardcode the port.** It is picked at startup and reported back in the `http` field (`paintress web`) and in `url` / `access.url` (`paintress_viewer`): print that field, do not rebuild the URL. The default is `6033`, but if the host cannot reach it the viewer falls back to `6133` / `6233`, and finally to `0.0.0.0` with the same three ports — in that last case the working address is `http://<wsl-ip>:6033/` and `localhost` will **not** work from the user's browser, so say so instead of handing them a dead link. `--port` pins one port and errors when busy; `--bind loopback|all` pins the interface.
 
 ## Bind the project yourself — do not wait to be asked
 
