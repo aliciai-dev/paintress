@@ -1008,6 +1008,83 @@ a.ghost {
   font-size: 12px;
 }
 
+/* ---------- 只读属性面板（选中节点 → 看它在磁盘上的字段） ---------- */
+/*
+ * 面板只读：写路径只有 MCP / CLI 一条，这里不放任何输入控件。
+ * 行距与侧栏列表同一套密度；等宽字体只给值，键仍用正文字体，避免整片「代码感」。
+ */
+.inspector-panel {
+  width: 340px;
+  max-width: calc(100vw - 360px);
+}
+
+.insp-group {
+  padding: 2px 0 10px;
+}
+
+.insp-group + .insp-group {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.insp-group h3 {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.insp-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+  font-size: 12px;
+}
+
+.insp-key {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insp-val {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.insp-val code {
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.insp-swatch {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(31, 42, 55, 0.16);
+  transform: translateY(1px);
+}
+
+.insp-resolved {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.insp-note {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
 .panel-hint {
   color: var(--muted);
   font-size: 12px;

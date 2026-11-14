@@ -112,13 +112,42 @@ browserDescribe('查看器交互（真实浏览器）', () => {
     }
   });
 
+  it('属性面板：点节点出只读字段，点空白收起', async () => {
+    const page = await openViewer();
+    try {
+      await page.frameLocator('.preview').locator('[data-node-id="title"]').click();
+      await page.waitForSelector('.inspector-panel');
+      const text = await page.locator('.inspector-panel').innerText();
+      // 标识 + 文本 + 变量解引用都要看得见
+      expect(text).toContain('title');
+      expect(text).toContain('Paintress');
+      expect(text).toContain('$accent');
+      expect(text).toContain('#6BA3FF');
+      // 只读：面板里不该有输入控件
+      expect(await page.locator('.inspector-panel input, .inspector-panel textarea, .inspector-panel select').count()).toBe(0);
+      // 面板与选中同步：换选 card，内容跟着换（圆角四元组是数组，要能读出来）
+      await page.frameLocator('.preview').locator('[data-node-id="card"]').click();
+      await page.waitForFunction(
+        () => ((globalThis as any).document.querySelector('.inspector-panel')?.textContent ?? '').includes('cornerRadius'),
+        undefined,
+        { timeout: 5000 },
+      );
+      expect(await page.locator('.inspector-panel').innerText()).toContain('card');
+      // 点空白：选中清空、面板收起
+      await page.frameLocator('.preview').locator('body').click({ position: { x: 2, y: 2 } });
+      await page.waitForSelector('.inspector-panel', { state: 'detached' });
+    } finally {
+      await page.close();
+    }
+  });
+
   it('浮动工具条：预设面板改值写回文件，组件画廊显示 tile', async () => {
     const page = await openViewer();
     try {
       const rail = page.locator('.rail-btn');
-      expect(await rail.count()).toBe(2);
+      expect(await rail.count()).toBe(3); // 属性 / 预设 / 组件
 
-      await rail.nth(0).click();
+      await rail.nth(1).click();
       await page.waitForSelector('.preset-panel');
       const input = page.locator('.preset-panel .preset-value').first();
       await input.fill('#908030');
@@ -126,7 +155,7 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       await until(() => readFileSync(join(dir, PRESET_FILE), 'utf8').includes('#908030'));
 
       // 工具条互斥：点组件 → 预设面板收起
-      await rail.nth(1).click();
+      await rail.nth(2).click();
       await page.waitForSelector('.components-panel');
       expect(await page.locator('.preset-panel').count()).toBe(0);
       await page.waitForSelector('.components-panel .tile');

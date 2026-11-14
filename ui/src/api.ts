@@ -42,6 +42,13 @@ export interface FilesResponse {
   depth: number;
 }
 
+/** 单节点（属性面板）：磁盘上的原始节点 + 变量表（项目预设打底、本地优先） */
+export interface NodeResponse {
+  ok: boolean;
+  node: Record<string, unknown>;
+  vars: Record<string, string>;
+}
+
 export interface MarksResponse {
   ok: boolean;
   marks: Mark[];
@@ -63,6 +70,13 @@ export function fetchProjects(): Promise<ProjectsResponse> {
 /** 轻量轮询：只取版本与连接数，不触发项目目录扫描 */
 export function fetchDaemonInfo(): Promise<DaemonInfoResponse> {
   return getJson<DaemonInfoResponse>('/api/version');
+}
+
+/** 只读：取一个节点的原始字段（属性面板用） */
+export function fetchNode(project: string, path: string, id: string): Promise<NodeResponse> {
+  return getJson<NodeResponse>(
+    `/api/node?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`,
+  );
 }
 
 export function fetchFiles(project: string): Promise<FilesResponse> {

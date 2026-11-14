@@ -368,6 +368,44 @@ describe('Registry 内部行为', () => {
 });
 
 
+describe('单节点接口（属性面板）', () => {
+  const name = 'node-proj';
+  let nodeDir: string;
+
+  beforeAll(async () => {
+    nodeDir = mkdtempSync(join(tmpdir(), 'paintress-node-'));
+    copyFileSync(join(import.meta.dirname, 'fixtures/basic.pen'), join(nodeDir, 'design.pen'));
+    await sendRequest({ kind: 'watch', project: name, dir: nodeDir });
+  });
+
+  afterAll(async () => {
+    await sendRequest({ kind: 'unwatch', project: name }).catch(() => {});
+    rmSync(nodeDir, { recursive: true, force: true });
+  });
+
+  it('按 id 取到磁盘上的原始节点，并带回变量表', async () => {
+    const res = await fetch(`${baseUrl}/api/node?project=${name}&path=design.pen&id=title`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; node: Record<string, unknown>; vars: Record<string, string> };
+    expect(body.ok).toBe(true);
+    expect(body.node['type']).toBe('text');
+    expect(body.node['content']).toBe('Paintress');
+    expect(body.vars['accent']).toBe('#6BA3FF');
+  });
+
+  it('节点不存在 → 404（不猜、不回落到第一个）', async () => {
+    const res = await fetch(`${baseUrl}/api/node?project=${name}&path=design.pen&id=nope`);
+    expect(res.status).toBe(404);
+  });
+
+  it('项目未注册 / 路径穿越 → 4xx', async () => {
+    const unknown = await fetch(`${baseUrl}/api/node?project=ghost&path=design.pen&id=title`);
+    expect(unknown.status).toBe(404);
+    const escape = await fetch(`${baseUrl}/api/node?project=${name}&path=../../etc/passwd&id=title`);
+    expect(escape.status).toBe(400);
+  });
+});
+
 describe('会话标记（marks API）', () => {
   beforeAll(async () => {
     // idle 用例可能重启过 daemon，这里确保项目已注册

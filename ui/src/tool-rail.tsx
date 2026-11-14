@@ -5,7 +5,7 @@ import { For, type JSX } from 'solid-js';
 export interface RailItem {
   id: string;
   label: string;
-  icon: 'preset' | 'component';
+  icon: 'preset' | 'component' | 'inspect';
 }
 
 export interface ToolRailProps {
@@ -28,6 +28,16 @@ function PresetIcon(): JSX.Element {
       <circle cx="15.5" cy="9" r="1.3" fill="currentColor" stroke="none" />
       <circle cx="8.5" cy="15" r="1.3" fill="currentColor" stroke="none" />
       <circle cx="15.5" cy="15" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function InspectIcon(): JSX.Element {
+  // 指针 + 框：属性面板的隐喻（看一个节点的内部）
+  return (
+    <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="4" stroke-dasharray="2 3" />
+      <path d="M9 9h6v6H9z" />
     </svg>
   );
 }
@@ -57,7 +67,7 @@ export function ToolRail(props: ToolRailProps): JSX.Element {
             aria-pressed={props.active === item.id}
             onClick={() => props.onToggle(item.id)}
           >
-            {item.icon === 'preset' ? <PresetIcon /> : <ComponentIcon />}
+            {item.icon === 'preset' ? <PresetIcon /> : item.icon === 'inspect' ? <InspectIcon /> : <ComponentIcon />}
           </button>
         )}
       </For>

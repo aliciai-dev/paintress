@@ -8,6 +8,7 @@ import {
   fetchFiles,
   fetchComponents,
   fetchMarks,
+  fetchNode,
   fetchNotes,
   fetchPresets,
   fetchProjects,
@@ -39,6 +40,7 @@ import { NotesDrawer } from './notes-drawer';
 import { PresetPanel } from './preset-panel';
 import { ComponentGallery } from './component-gallery';
 import { ToolRail, type RailItem } from './tool-rail';
+import { InspectorPanel } from './inspector-panel';
 
 interface Board {
   id: string;
@@ -124,7 +126,12 @@ export default function App() {
   const [noteExists, setNoteExists] = createSignal(false);
   const [noteMarkdown, setNoteMarkdown] = createSignal<string | null>(null);
   const [noteError, setNoteError] = createSignal<string | null>(null);
-  const [panel, setPanel] = createSignal<'presets' | 'components' | null>(null);
+  const [panel, setPanel] = createSignal<'presets' | 'components' | 'inspect' | null>(null);
+  /** 属性面板：选中节点 → 只读字段（不参与任何写路径） */
+  const [inspectorNode, setInspectorNode] = createSignal<Record<string, unknown> | null>(null);
+  const [inspectorVars, setInspectorVars] = createSignal<Record<string, string>>({});
+  /** 人手动关掉属性面板后，本次会话不再自动弹（选中仍会刷新数据） */
+  let inspectorDismissed = false;
   const [presets, setPresets] = createSignal<PresetItem[]>([]);
   const [components, setComponents] = createSignal<ComponentItem[]>([]);
   /** 关窗倒计时（秒）；null = 不显示遮罩 */
@@ -138,6 +145,7 @@ export default function App() {
   const [copied, setCopied] = createSignal(false);
   const m = (): ReturnType<typeof messages> => messages(lang());
   const railItems = (): RailItem[] => [
+    { id: 'inspect', label: m().inspector, icon: 'inspect' },
     { id: 'presets', label: m().presets, icon: 'preset' },
     { id: 'components', label: m().components, icon: 'component' },
   ];
@@ -351,13 +359,45 @@ export default function App() {
   }
 
   function togglePanel(id: string): void {
-    const next = panel() === id ? null : id === 'presets' ? 'presets' : 'components';
-    setPanel(next);
+    const closing = panel() === id;
+    const next = closing ? null : id;
+    setPanel(next as 'presets' | 'components' | 'inspect' | null);
+    // 属性面板被手动关掉：本次会话不再因为选中而自动弹回来
+    if (id === 'inspect' && closing) inspectorDismissed = true;
     const p = activeProject();
     if (p === null) return;
     if (next === 'presets') void loadPresets(p);
     if (next === 'components') void loadComponents(p);
   }
+
+  /** 取一个节点的只读属性；选中已经换人时丢弃这次结果 */
+  async function loadInspector(project: string, file: string, id: string): Promise<void> {
+    try {
+      const res = await fetchNode(project, file, id);
+      if (selectedId() !== id) return;
+      setInspectorNode(res.node);
+      setInspectorVars(res.vars);
+      if (!inspectorDismissed && panel() === null) setPanel('inspect');
+    } catch (cause) {
+      if (selectedId() !== id) return;
+      setInspectorNode(null);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  // 选中变化 → 拉一次属性；清空选中 → 收起面板（规则见 specs/viewer-inspector.md）
+  createEffect(
+    on(selectedId, (id) => {
+      const project = activeProject();
+      const file = activeFile();
+      if (id === null || project === null || file === null) {
+        setInspectorNode(null);
+        if (panel() === 'inspect') setPanel(null);
+        return;
+      }
+      void loadInspector(project, file, id);
+    }),
+  );
 
   // ---------- 版本升级提示 ----------
   /** 有更新的版本时返回新版号，否则 null（离线 / 未探测 / 已是最新都返回 null） */
@@ -670,7 +710,13 @@ export default function App() {
     }
     const target = ev.target as Element | null;
     const hit = target?.closest('[data-node-id]');
-    if (!hit) return;
+    if (!hit) {
+      // 点空白 = 取消选中（属性面板随之收起）
+      setSelectedId(null);
+      setCrumbs([]);
+      applyHighlight();
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     // Alt+点击：选上一层（已在顶层时选自己）
@@ -964,6 +1010,9 @@ export default function App() {
         void loadNotes(p, f);
         if (panel() === 'presets') void loadPresets(p);
         if (panel() === 'components') void loadComponents(p);
+        // 文件被 agent 改了：属性面板要跟着刷新（选中没变，数据变了）
+        const selected = selectedId();
+        if (panel() === 'inspect' && selected !== null) void loadInspector(p, f, selected);
       });
     }),
   );
@@ -1225,6 +1274,23 @@ export default function App() {
                   }}
                   onClose={() => setPanel(null)}
                   onSet={(key, value) => void applyPreset(key, value)}
+                />
+              </Show>
+              <Show when={panel() === 'inspect'}>
+                <InspectorPanel
+                  node={inspectorNode()}
+                  vars={inspectorVars()}
+                  labels={{
+                    title: m().inspector,
+                    close: m().closePanel,
+                    empty: m().inspectorEmpty,
+                    groups: m().inspectorGroups,
+                    descendants: m().inspectorDescendants,
+                  }}
+                  onClose={() => {
+                    inspectorDismissed = true;
+                    setPanel(null);
+                  }}
                 />
               </Show>
               <Show when={panel() === 'components'}>

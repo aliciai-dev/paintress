@@ -49,6 +49,19 @@ export interface Messages {
   versionTitle: string;
   /** 项目行上的 agent 在线指示灯悬停文案 */
   agentOnline: string;
+  /** 只读属性面板 */
+  inspector: string;
+  inspectorEmpty: string;
+  inspectorGroups: {
+    identity: string;
+    geometry: string;
+    layout: string;
+    appearance: string;
+    text: string;
+    other: string;
+  };
+  /** ref 实例覆写了多少后代 */
+  inspectorDescendants: (count: number) => string;
   /** 无激活项目时的关窗倒计时 */
   noActiveProjects: string;
   closingIn: (seconds: number) => string;
@@ -119,6 +132,17 @@ const MESSAGES: Record<Lang, Messages> = {
     close: '关闭',
     versionTitle: '版本',
     agentOnline: 'agent 已接入',
+    inspector: '属性',
+    inspectorEmpty: '选中画布里的一个节点，这里显示它的属性。',
+    inspectorGroups: {
+      identity: '标识',
+      geometry: '几何',
+      layout: '布局',
+      appearance: '外观',
+      text: '文本',
+      other: '其它',
+    },
+    inspectorDescendants: (count) => `ref 覆写了 ${count} 个后代`,
     noActiveProjects: '无激活项目',
     closingIn: (seconds) => `窗口将在 ${seconds} 秒后关闭`,
     closingAuto: '窗口会自动关闭，不用手动操作。',
@@ -181,6 +205,17 @@ const MESSAGES: Record<Lang, Messages> = {
     close: 'Close',
     versionTitle: 'Version',
     agentOnline: 'Agent attached',
+    inspector: 'Properties',
+    inspectorEmpty: 'Select a node on the canvas to see its properties.',
+    inspectorGroups: {
+      identity: 'Identity',
+      geometry: 'Geometry',
+      layout: 'Layout',
+      appearance: 'Appearance',
+      text: 'Text',
+      other: 'Other',
+    },
+    inspectorDescendants: (count) => `overrides ${count} descendant${count === 1 ? '' : 's'}`,
     noActiveProjects: 'No active projects',
     closingIn: (seconds) => `This window closes in ${seconds}s`,
     closingAuto: 'This window closes itself — no need to do anything.',

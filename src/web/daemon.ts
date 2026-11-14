@@ -215,6 +215,35 @@ function isTrustedWrite(req: import('node:http').IncomingMessage): boolean {
   return req.headers['x-paintress'] === '1';
 }
 
+/**
+ * 属性面板用的变量表：项目预设打底、文档本地同名优先。
+ * themed 列表取第一个可显示的值（面板只做展示，不替人挑主题）。
+ */
+function panelVars(fileAbs: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const collect = (doc: PenDocument | null): void => {
+    for (const [key, def] of Object.entries(doc?.variables ?? {})) {
+      const raw = (def as Record<string, unknown>)['value'];
+      const first = Array.isArray(raw)
+        ? raw
+            .map((e) => (e !== null && typeof e === 'object' ? (e as Record<string, unknown>)['value'] : undefined))
+            .find((x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')
+        : raw;
+      if (typeof first === 'string' || typeof first === 'number' || typeof first === 'boolean') {
+        out[key] = String(first);
+      }
+    }
+  };
+  try {
+    const p = presetPathFor(fileAbs);
+    if (p !== null) collect(loadDoc(p).doc);
+    collect(loadDoc(fileAbs).doc);
+  } catch {
+    /* 读不到就只显示已经收集到的 */
+  }
+  return out;
+}
+
 export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
   const releaseLock = acquireLock();
   const registry = new Registry();
@@ -571,6 +600,41 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           const qFile = url.searchParams.get('path') ?? '';
           const set = changes.get(qProject, qFile);
           sendJson(200, { ok: true, ids: set?.ids ?? [], at: set?.at ?? 0 });
+          return;
+        }
+        // ---------- 单节点读取（查看器只读属性面板）----------
+        if (segments[1] === 'node' && req.method === 'GET') {
+          const qProject = url.searchParams.get('project') ?? '';
+          const qFile = url.searchParams.get('path') ?? '';
+          const qId = url.searchParams.get('id') ?? '';
+          if (qProject === '' || qFile === '' || qId === '') {
+            sendJson(400, { ok: false, error: '缺少 project / path / id' });
+            return;
+          }
+          const entry = registry.get(qProject);
+          if (!entry) {
+            sendJson(404, { ok: false, error: `未注册的项目：${qProject}` });
+            return;
+          }
+          const abs = safeJoin(entry.rootReal, qFile);
+          if (!abs) {
+            sendJson(400, { ok: false, error: `路径不在项目内：${qFile}` });
+            return;
+          }
+          let doc: PenDocument;
+          try {
+            doc = loadDoc(abs).doc;
+          } catch (cause) {
+            sendJson(404, { ok: false, error: cause instanceof Error ? cause.message : String(cause) });
+            return;
+          }
+          const node = findNodeIn(doc.children, qId);
+          if (node === null) {
+            sendJson(404, { ok: false, error: `节点不存在：${qId}` });
+            return;
+          }
+          entry.lastAccess = Date.now();
+          sendJson(200, { ok: true, node, vars: panelVars(abs) });
           return;
         }
         if (segments[1] === 'marks') {
