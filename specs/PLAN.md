@@ -41,6 +41,9 @@
 
 依赖：A1 与 A3 都要动画布右侧/画板条，先 A1 再 A2 再 A3；C1–C3 互相独立，可穿插；B1→B2→B3 是硬顺序，B4/B5 依赖 B2。
 
+**2026-11-14 收口：A1–A3、C1–C3、B1–B6 全部落地**（质量基线：双端 `tsc` 0 错误、27 文件 350 用例全绿、`pnpm build` 通过）。
+摘要见 `.agents/memory/FINISHED.md`；决策见 `ARCHITECTURE.md#D-010`。
+
 ## 未决问题
 
 - **dts 生成被禁用（债务）**：zod passthrough 推断类型超过 TS 序列化上限（TS7056，实测定位在 `src/schema/nodes.ts:209` 的 `NodeSchema`）。2026-11-11 实验：只给 `NodeSchema` 加显式注解即可通过构建，但 `index.d.ts` 达 1548 KB（包体从 164 KB → 1.67 MB），故 0.1.0 不发类型产物；要发需先给全部导出 schema 显式注解瘦身，或按需导出 + api-extractor。

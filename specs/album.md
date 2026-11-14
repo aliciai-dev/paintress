@@ -1,5 +1,7 @@
 # 画谱（Album）：把项目的颜色与样式框死
 
+- 状态：B1–B6 已实现（2026-11-14），记录见 `.agents/implementations/2026-11-14_2054_album-b-batch.md`
+
 ## 需求
 
 operator 2026-11-12：**「最关键的一点要提供组件或是预设概念，用于框死一个项目中的颜色，样式，以及一个一个的可复用组件。」**
@@ -34,6 +36,9 @@ tokens（谱值）  ←  presets（谱式）  ←  components（谱件）  ←  
 | `paintress_audit` | `path` | 越界节点（可替换的 token/preset）、孤儿 token、从未被引用的 preset、悬空 preset 引用、preset 里的裸值 |
 | `paintress_establish` | `path`、`apply?` | 从现有稿提取候选 token（按值聚类）与候选 preset（按节点类型 + 属性组合）；`apply=false` 只出建议，`apply=true` 才写 `__preset.ptr` 并把匹配节点改写为引用 |
 | `paintress_adjust` | `key`/`group`、新值、`apply?` | 改 token/preset 的影响面：受影响节点 id + 旧值→新值；`apply=true` 才写 `__preset.ptr`（设计稿自动跟着变，不需要批量改稿） |
+
+组本身的写入并入 `paintress_preset`（`action: set-group / remove-group`），不另起工具：
+组属于预设文件，与 token 同一条写路径、同一把 mtime 锁。
 
 CLI 同名子命令：`paintress audit|establish|adjust`，参数与 MCP 一一对应。
 

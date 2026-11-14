@@ -182,3 +182,29 @@
 - 视觉：细线进度条换成 72px 环形进度 + 居中秒数，顶部 2px 蓝→金发丝线，最后 3 秒转金；`prefers-reduced-motion` 全关；秒数只出现一次，读屏用 `sr-only` 播报。
 - 质量基线：双端 `tsc` 0 错误、**23 文件 300 用例全绿**、`pnpm build` 通过；新增 `test/viewer-leave.spec.ts`（3 用例，真实 Chromium，含「关不掉」分支）。
 - 证据：`.agents/implementations/2026-11-14_1443_autoclose-window.md`；决策见 `.agents/memory/ARCHITECTURE.md#D-009`。
+
+### 查看器三件：属性面板 / 快速切换 / 单帧导出（2026-11-14）
+
+- `GET /api/node` 返回磁盘原始节点 + 变量表（预设打底、本地优先）；`InspectorPanel` 复用 Panel 壳，
+  分标识/几何/布局/外观/文本/其它，颜色出色块、`$var` 出解析值，**只读**。点空白现在会取消选中。
+- `QuickSwitch`（`Ctrl/Cmd+K`）：过滤 + ↑↓ + Enter，侧栏保留；iframe 换稿改用 `location.replace`，
+  不再给标签加浏览历史（否则自动关窗失效，D-009）。
+- `GET /api/export`：画板级 PNG，2x/1x/0.5x；1x = 查看器 `1:1`；单边超 8192 等比压回；
+  `X-Paintress-Scale` 报告实际倍率；无 Chromium 501。
+- 截图倍率统一：MCP/CLI `scale` 0.2–2 连续、**默认 0.8**（agent 自审图），与查看器同一套 1x 定义。
+- 证据：`.agents/implementations/2026-11-14_2050_viewer-a-batch.md`。
+
+### 渲染器 C1–C3：弧形/圆环、圆角多边形、网格渐变（2026-11-14）
+
+- 椭圆弧形/圆环改内联 SVG（画板像素坐标系，viewBox = w×h），整圆实心仍走 div；填充只支持纯色，否则降级并说明。
+- 多边形 `cornerRadius` 用「内切圆退让 + 二次贝塞尔」；需要数值宽高，否则回退 clip-path。
+- `mesh_gradient` 每格一层径向渐变 + 平均底色，超过 144 格或网格不完整时保持旧的单色降级。
+- 证据：`.agents/implementations/2026-11-14_2052_renderer-c-batch.md`。
+
+### 画谱 B1–B6：token 分类、preset 组、audit/establish/adjust（2026-11-14）
+
+- token 类型扩到 color/radius/spacing/font；preset 组存 `x-paintress.presets.groups`，节点 `preset` 引用在渲染时叠加。
+- `paintress_audit`（只读）、`paintress_establish`（默认 dry-run）、`paintress_adjust`（默认 dry-run，apply 只写预设文件）；
+  `paintress_preset` 增 set-group / remove-group；预设面板按 kind 分组 + 组只读展示。
+- 工具数 16 → 19；质量基线：双端 `tsc` 0 错误、**27 文件 350 用例全绿**、`pnpm build` 通过。
+- 证据：`.agents/implementations/2026-11-14_2054_album-b-batch.md`；决策 `ARCHITECTURE.md#D-010`。

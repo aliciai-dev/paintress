@@ -110,3 +110,23 @@
 - **后果**：前端多两个状态（`leaveReason` / `closeBlocked`）；服务端不变（`emptyBrowserMs` 30s 仍在 10s 之后兜底）。换浏览器策略或改成 `--app` 窗口时，只有第 2 条要重评。
 - **证据**：`.agents/implementations/2026-11-14_1443_autoclose-window.md`（含 `window.close()` 三种历史长度下的实测表）。
 - **日期**：2026-11-14
+
+### D-010 — 画谱：tokens → presets → 节点，改一处全项目跟着变
+
+- **背景**（2026-11-12 提需求 / 2026-11-14 落地本体）：operator 要「框死一个项目里的颜色、样式、可复用组件」。
+  框架子集（`__preset.ptr` 变量 + 预设面板 + `__components.ptr` 画廊）在 0.6.0 已上线，
+  缺的是引用链与操作层：没有 preset 层，token 只是「写在项目文件里的变量」，改一处不会全项目跟着变。
+- **决定**：
+  1. **三层不拆概念**：token = `__preset.ptr` 的 `variables`（kind: color/radius/spacing/font）；
+     preset = `x-paintress.presets.groups`（`{target, props}`，props 值必须是 `$token`）；
+     节点用 `preset: '<name>'` 参与，渲染时组属性打底、**节点显式属性优先**，保存不烤值。
+  2. **组属于预设文件**：写入并入 `paintress_preset`（set-group / remove-group），与 token 共用一次原子写；
+     不另起「album」工具族，schema 里也不出现 album。
+  3. **三个操作按「先看后写」**：`audit` 只读；`establish` 默认 dry-run，apply 才写预设文件 + 改写命中节点；
+     `adjust` 默认 dry-run（受影响节点 + before→after），apply 只写 `__preset.ptr`。
+     人不需要为了「改一个颜色」让 agent 批量重写设计稿。
+  4. **逃生舱**：`metadata.allowLiteral` 的子树跳过裸值审计；`validate` 的越界只是 warning，不阻断写入。
+- **后果**：`change` 一条 token → 画布/截图/校验同时变（渲染前合并预设，早已存在）；
+  审计有噪音风险（裸值与 token 等值才建议），但可 `--min-uses` 与 allowLiteral 收窄。
+- **证据**：`.agents/implementations/2026-11-14_2054_album-b-batch.md`；规格 `specs/album.md`。
+- **日期**：2026-11-14

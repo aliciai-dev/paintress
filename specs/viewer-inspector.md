@@ -1,5 +1,7 @@
 # 查看器只读属性面板
 
+- 状态：已实现（2026-11-14）——`GET /api/node` + `InspectorPanel`，记录见 `.agents/implementations/2026-11-14_2050_viewer-a-batch.md`
+
 ## 需求
 
 点中一个节点后，人得能看见它到底是什么：类型、尺寸、颜色、圆角、文字、布局、是不是组件实例。

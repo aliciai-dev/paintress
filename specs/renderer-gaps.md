@@ -1,5 +1,7 @@
 # 渲染器规格缺口（C1–C3）
 
+- 状态：C1–C3 已实现（2026-11-14），记录见 `.agents/implementations/2026-11-14_2052_renderer-c-batch.md`
+
 > 目标是「不再降级 + 不再警告」的三项。`format/spec.yaml` 是唯一事实来源；
 > 其余缺口（shader / 图标库 / 离线文字度量 / imports / 逐边描边）见 `FUTURE.md`。
 
