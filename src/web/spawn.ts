@@ -36,15 +36,20 @@ const START_TIMEOUT_MS = 15_000;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 复用已在运行的 daemon；显式指定了端口且与运行中的不一致时抛错
- * （幂等不等于「悄悄忽略你的参数」：要换端口得先 `paintress stop`）。
+ * 复用已在运行的 daemon；显式指定的端口/绑定与运行中的不一致时抛错
+ * （幂等不等于「悄悄忽略你的参数」：要换端口或绑定得先 `paintress stop`）。
  */
-export async function reuseDaemon(port?: number): Promise<DaemonInfo | null> {
+export async function reuseDaemon(port?: number, bind?: BindPreference): Promise<DaemonInfo | null> {
   const info = await queryDaemon();
   if (info === null) return null;
   if (port !== undefined && port !== info.port) {
     throw new Error(
       `paintress web 已在运行（pid ${info.pid}，端口 ${info.port}），与请求的端口 ${port} 不同；如需换端口请先 paintress stop`,
+    );
+  }
+  if (bind !== undefined && bind !== 'auto' && bind !== info.access.bind) {
+    throw new Error(
+      `paintress web 已在运行（pid ${info.pid}，绑定 ${info.access.bind}），与请求的绑定 ${bind} 不同；如需换绑定请先 paintress stop`,
     );
   }
   return info;
@@ -65,7 +70,7 @@ function timeoutHint(): string {
 }
 
 export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
-  const running = await reuseDaemon(opts.port);
+  const running = await reuseDaemon(opts.port, opts.bind);
   if (running !== null) return { started: false, pid: running.pid, port: running.port, access: running.access };
 
   const entry = process.argv[1];
@@ -76,10 +81,26 @@ export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<Ensu
   if (opts.idleTimeoutMs !== undefined) args.push('--idle', String(opts.idleTimeoutMs));
   if (opts.noOpen === true) args.push('--no-open');
 
-  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
   child.unref();
+  // 后台模式的详细失败原因（保留段、六个候选明细）只在子进程 stderr 里；
+  // 必须带回来，否则「显式端口被占」会退化成一句没有诊断价值的退出码。
+  // 成功后继续 drain、但不再累积，避免常驻 daemon 的日志把管道塞满。
+  let startupStderr = '';
+  let ready = false;
+  child.stderr?.on('data', (chunk: Buffer) => {
+    if (ready) return;
+    startupStderr = `${startupStderr}${chunk.toString('utf8')}`.slice(-32 * 1024);
+  });
+  // unref 管道：后台 CLI 返回后能正常退出，不会被 daemon 的长命 stderr 拖住。
+  // SAFETY: stdio 'pipe' 的 stderr 在运行时是可 unref 的 Socket；ChildProcess 类型只暴露 Readable。
+  (child.stderr as unknown as { unref?: () => void } | null)?.unref?.();
   // 子进程失败（端口被占、锁被活进程占着）时它会自己退出：早发现比等满超时好
   let exitCode: number | null = null;
+  child.once('error', (cause) => {
+    startupStderr = `${startupStderr}\n${cause.message}`;
+    exitCode = -1;
+  });
   child.once('exit', (code) => {
     exitCode = code;
   });
@@ -88,16 +109,30 @@ export async function ensureDaemon(opts: EnsureDaemonOptions = {}): Promise<Ensu
   while (Date.now() < deadline) {
     const info = await queryDaemon(500);
     if (info !== null) {
-      // 端口按 daemon 自己报的为准：并发启动时输掉竞争的可能是我们这个子进程
+      // 端口/绑定按 daemon 自己报的为准：并发启动时输掉竞争的可能是我们这个子进程
       if (opts.port !== undefined && info.port !== opts.port) {
         throw new Error(`daemon 起在端口 ${info.port} 而不是请求的 ${opts.port}；先 paintress stop 再重试`);
       }
-      return { started: true, pid: info.pid, port: info.port, access: info.access };
+      if (opts.bind !== undefined && opts.bind !== 'auto' && info.access.bind !== opts.bind) {
+        throw new Error(`daemon 起在绑定 ${info.access.bind} 而不是请求的 ${opts.bind}；先 paintress stop 再重试`);
+      }
+      ready = true;
+      // 并发启动的输家也走这里；只有胜者就是本次子进程时才算 started。
+      return { started: info.pid === child.pid, pid: info.pid, port: info.port, access: info.access };
     }
     if (exitCode !== null) {
-      throw new Error(`后台 daemon 启动失败（退出码 ${exitCode}）${timeoutHint()}`);
+      const detail = startupStderr.trim();
+      // 单实例锁可能发生在胜者的控制面 socket 就绪之前（宿主体检要花几百毫秒）。
+      // 这时继续轮询复用胜者，而不是把正常的并发启动报成失败。
+      if (/已在运行|单实例锁/.test(detail)) {
+        await sleep(100);
+        continue;
+      }
+      const suffix = detail === '' ? timeoutHint() : `：\n${detail}`;
+      throw new Error(`后台 daemon 启动失败（退出码 ${exitCode}）${suffix}`);
     }
     await sleep(100);
   }
-  throw new Error(`后台启动 daemon 超时（${START_TIMEOUT_MS}ms）${timeoutHint()}`);
+  const detail = startupStderr.trim();
+  throw new Error(`后台启动 daemon 超时（${START_TIMEOUT_MS}ms）${detail === '' ? timeoutHint() : `：\n${detail}`}`);
 }

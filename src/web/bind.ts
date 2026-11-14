@@ -12,11 +12,10 @@ import { defaultRouteIpv4, interopEnabled, isWsl, windowsSystem32 } from '../sha
  * 而保留段每次开机在动态端口范围内重新划分，位置会漂：同一个默认端口今天能开、明天不能开。
  * 这一类故障在 WSL 内部完全看不出来（daemon 自己 `curl 127.0.0.1` 永远是 200）。
  *
- * 因此顺序是「先定端口、再起服务、最后复核」：
+ * 因此顺序是「宿主预检、真正 listen、最后复核」：
  *   1. 宿主体检（一次 interop 调用）：哪些候选端口在 Windows 上绑得上；
- *   2. WSL 侧试绑（瞬时）：把内外两侧的冲突都筛掉；
- *   3. 真正 listen（此时几乎不会失败）；
- *   4. 端到端复核：从 Windows 侧取 `/api/ping`，校验 nonce —— 只信身份，不信 200。
+ *   2. 真正 listen：WSL 内冲突在这里暴露，失败才换下一个候选；
+ *   3. 端到端复核：从 Windows 侧取 `/api/ping`，校验 nonce —— 只信身份，不信 200。
  *
  * 阶梯：127.0.0.1 × [6033, 6133, 6233] → 0.0.0.0 × [6033, 6133, 6233]，最多 6 次。
  * 兜底的 0.0.0.0 之所以有效：Windows 直连 WSL 网卡地址不经过 wslrelay，端口被宿主保留也不影响
@@ -102,9 +101,8 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** 单个候选的探测预算：loopback 要走 wslrelay 接管（实测 300ms–1.06s），all 是直连 */
 const PROBE_BUDGET_MS: Record<BindMode, number> = { loopback: 2000, all: 600 };
-/** 整条阶梯的硬上限：超过就带着已试记录报错，绝不让启动无限拖 */
-const LADDER_BUDGET_MS = 9000;
 const PROBE_INTERVAL_MS = 150;
+/** 单次 Windows 进程调用的硬超时；端到端探测会按剩余预算收紧它 */
 const INTEROP_TIMEOUT_MS = 4000;
 
 function inRange(ranges: Array<[number, number]>, port: number): boolean {
@@ -127,14 +125,14 @@ function candidatesFor(opts: BindOptions): Endpoint[] {
 }
 
 /** 运行一条 Windows 命令，收集 stdout（超时/不存在都返回 null） */
-async function runWindows(exe: string, args: string[]): Promise<string | null> {
+async function runWindows(exe: string, args: string[], timeoutMs = INTEROP_TIMEOUT_MS): Promise<string | null> {
   return new Promise((resolve) => {
     let out = '';
     const child = spawn(exe, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve(null);
-    }, INTEROP_TIMEOUT_MS);
+    }, timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       out += chunk.toString('utf8');
     });
@@ -212,7 +210,8 @@ async function windowsProbe(url: string, budgetMs: number): Promise<boolean> {
   const curl = `${sys32}/curl.exe`;
   if (existsSync(curl)) {
     while (Date.now() < deadline) {
-      const out = await runWindows(curl, ['-s', '--noproxy', '*', '-m', '2', url]);
+      const remaining = deadline - Date.now();
+      const out = await runWindows(curl, ['-s', '--noproxy', '*', '-m', '2', url], Math.max(1, remaining));
       if (out !== null && out.includes(nonce)) return true;
       await sleep(PROBE_INTERVAL_MS);
     }
@@ -222,7 +221,8 @@ async function windowsProbe(url: string, budgetMs: number): Promise<boolean> {
   if (!existsSync(ps)) return false;
   const script = `try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri '${url}').Content } catch { '' }`;
   while (Date.now() < deadline) {
-    const out = await runWindows(ps, ['-NoProfile', '-NonInteractive', '-Command', script]);
+    const remaining = deadline - Date.now();
+    const out = await runWindows(ps, ['-NoProfile', '-NonInteractive', '-Command', script], Math.max(1, remaining));
     if (out !== null && out.includes(nonce)) return true;
     await sleep(PROBE_INTERVAL_MS);
   }
@@ -301,7 +301,7 @@ async function verifyCandidate(cand: Endpoint, ctx: ProbeContext): Promise<Windo
   let target: string | null = null;
   if (cand.bind === 'loopback') target = `127.0.0.1:${cand.port}`;
   else if (ctx.ipv4 !== null) target = `${ctx.ipv4}:${cand.port}`;
-  if (target === null) return 'unavailable';
+  if (target === null) return 'unreachable';
   const ok = await ctx.probe(`http://${target}${PROBE_PATH}?nonce=${ctx.nonce}`, PROBE_BUDGET_MS[cand.bind]);
   return ok ? 'ok' : 'unreachable';
 }
@@ -320,7 +320,6 @@ export async function bindWithFallback(opts: BindOptions): Promise<{ server: Htt
   const requestedPort = opts.requestedPort ?? opts.ports?.[0] ?? DEFAULT_PORT;
   const plan = candidatesFor(opts);
   const attempts: BindAttempt[] = [];
-  const startedAt = Date.now();
   const ipv4 = (seams.hostIpv4 ?? defaultRouteIpv4)();
   const probe = seams.probe ?? windowsProbe;
 
@@ -338,9 +337,11 @@ export async function bindWithFallback(opts: BindOptions): Promise<{ server: Htt
   const probeCtx: ProbeContext = { wsl, canProbe, ipv4, nonce: opts.nonce, probe };
 
   for (const cand of plan) {
-    if (Date.now() - startedAt > LADDER_BUDGET_MS) {
-      attempts.push({ port: cand.port, bind: cand.bind, result: 'windows-unreachable', detail: '超出阶梯时间预算，未尝试' });
-      break;
+    // WSL 的 all 模式必须有一个宿主真能访问的网卡地址；没有就不能把 0.0.0.0 当 URL 报成功。
+    if (wsl && cand.bind === 'all' && ipv4 === null) {
+      attempts.push({ port: cand.port, bind: cand.bind, result: 'windows-unreachable', detail: '找不到默认路由网卡的 IPv4 地址' });
+      log(`${cand.port} (all) 没有可供宿主访问的网卡地址，换下一个`);
+      continue;
     }
 
     // 1. 宿主预检：保留段 / 宿主占用

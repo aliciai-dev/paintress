@@ -53,6 +53,13 @@ describe('幂等判据', () => {
     expect((await reuseDaemon(daemon.port))?.pid).toBe(daemon.pid);
     await expect(reuseDaemon(daemon.port + 1)).rejects.toThrow(/端口/);
   });
+
+  it('reuseDaemon：绑定匹配/auto 可复用，显式换绑定必须报错而不是静默忽略', async () => {
+    expect((await reuseDaemon(daemon.port, 'auto'))?.pid).toBe(daemon.pid);
+    expect((await reuseDaemon(daemon.port, 'loopback'))?.pid).toBe(daemon.pid);
+    await expect(reuseDaemon(daemon.port, 'all')).rejects.toThrow(/绑定 all/);
+    await expect(ensureDaemon({ port: daemon.port, bind: 'all' })).rejects.toThrow(/换绑定/);
+  });
 });
 
 describe('ensureViewer', () => {

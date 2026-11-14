@@ -1210,11 +1210,12 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             return `<div class="card"><h2 style="margin:0 0 4px"><a href="${href}">${esc(p.label)}</a></h2><div class="meta">${esc(info.root)} · ${info.fileCount} 个设计稿 · agent ${info.agentConns} · 浏览器 ${info.browserConns}</div></div>`;
           })
           .join('');
+        const boundHost = endpoint === null ? '127.0.0.1' : endpoint.host;
         send(
           200,
           layout(
             '项目',
-            `<h1>paintress</h1><div class="meta">pid ${process.pid} · 端口 ${opts.port ?? DEFAULT_PORT} · 运行 ${Math.round((Date.now() - startedAt) / 1000)}s</div>` +
+            `<h1>paintress</h1><div class="meta">pid ${process.pid} · 端口 ${port} · 绑定 ${boundHost} · 运行 ${Math.round((Date.now() - startedAt) / 1000)}s</div>` +
               `<p class="meta">前端未构建（<code>ui/dist</code> 不存在），当前为精简视图。</p>` +
               (items || '<p class="empty">还没有注册任何项目。用 <code>paintress watch &lt;name&gt; &lt;dir&gt;</code> 注册。</p>'),
           ),

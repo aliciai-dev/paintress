@@ -363,7 +363,7 @@ export async function main(argv: string[]): Promise<number> {
       const noOpen = flags[NO_OPEN_FLAG] === true || process.env['PAINTRESS_NO_OPEN'] === '1';
       // http 一律取 daemon 自报的 access.url：端口可能被跳级、绑定可能是 0.0.0.0
       // 幂等：已经在跑就复用它（打印 pid/端口/URL 后立刻返回），绝不起第二个进程。
-      const running = await reuseDaemon(port);
+      const running = await reuseDaemon(port, bind);
       if (running !== null) {
         console.log(
           JSON.stringify(

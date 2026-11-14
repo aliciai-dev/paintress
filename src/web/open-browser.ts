@@ -1,5 +1,9 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { isWsl, type PlatformContext } from '../shared/wsl.js';
+
+// 保留原导入路径；WSL 判据唯一实现见 shared/wsl.ts。
+export { isWsl } from '../shared/wsl.js';
 
 /**
  * 在**人所在那台机器**的浏览器里打开查看器。
@@ -24,11 +28,7 @@ export interface BrowserLauncher {
   args: string[];
 }
 
-export interface LauncherContext {
-  platform?: NodeJS.Platform;
-  env?: Record<string, string | undefined>;
-  /** WSL 判定的第二判据；不传则读 /proc/sys/kernel/osrelease */
-  osrelease?: string | null;
+export interface LauncherContext extends PlatformContext {
   /** 命令是否存在（测试注入）；默认按 PATH 查找 */
   has?: (cmd: string) => boolean;
 }
@@ -40,26 +40,6 @@ export function onPath(cmd: string): boolean {
     if (dir !== '' && existsSync(`${dir}/${cmd}`)) return true;
   }
   return false;
-}
-
-function readOsrelease(): string | null {
-  try {
-    return readFileSync('/proc/sys/kernel/osrelease', 'utf8');
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 是否跑在 WSL 里。环境变量优先（WSL_DISTRO_NAME / WSL_INTEROP），
- * 内核 release 里带 "microsoft" 是兜底（detached 子进程可能继承不到变量）。
- */
-export function isWsl(ctx: LauncherContext = {}): boolean {
-  if ((ctx.platform ?? process.platform) !== 'linux') return false;
-  const env = ctx.env ?? process.env;
-  if ((env['WSL_DISTRO_NAME'] ?? '') !== '' || (env['WSL_INTEROP'] ?? '') !== '') return true;
-  const rel = ctx.osrelease !== undefined ? ctx.osrelease : readOsrelease();
-  return rel !== null && /microsoft/i.test(rel);
 }
 
 /** Windows 侧打开 URL 的候选命令，按可靠度排序 */

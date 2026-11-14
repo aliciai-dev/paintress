@@ -68,6 +68,13 @@ describe('端口阶梯', () => {
     expect([...PORT_CANDIDATES]).toEqual([6033, 6133, 6233]);
   });
 
+  it('all 模式的项目 URL 用网卡地址，不写死 localhost/0.0.0.0', async () => {
+    const { baseUrl, projectUrl } = await import('../src/web/open-browser.js');
+    const origin = { port: 6033, host: '172.24.47.146' };
+    expect(baseUrl(origin)).toBe('http://172.24.47.146:6033/');
+    expect(projectUrl(origin, 'acme/shop')).toBe('http://172.24.47.146:6033/acme/shop');
+  });
+
   it('第一个候选能用就只试一次；非 WSL 不做宿主探测', async () => {
     const [p1, p2] = await freePorts(2);
     const probe = vi.fn(async () => true);
@@ -195,6 +202,21 @@ describe('端口阶梯', () => {
     opened.push(res.server);
     expect(res.endpoint).toMatchObject({ port: p1, bind: 'all' });
     expect(res.access.url).toBe(`http://10.9.9.9:${String(p1)}/`);
+  });
+
+  it('WSL 无可用网卡地址时，all 候选不能拿 0.0.0.0 冒充可访问 URL', async () => {
+    const [p1, p2] = await freePorts(2);
+    const probe = vi.fn(async () => true);
+    await expect(
+      bind({
+        create,
+        nonce: 'nonce-j',
+        bind: 'all',
+        ports: [p1 as number, p2 as number],
+        seams: { isWsl: () => true, hostIpv4: () => null, probe },
+      }),
+    ).rejects.toThrow(/2 个候选全部失败/);
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it('port 0（内核分配）：整段宿主校验跳过，端口取自实际监听', async () => {

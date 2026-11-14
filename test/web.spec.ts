@@ -409,8 +409,8 @@ describe('单节点接口（属性面板）', () => {
   it('项目未注册 / 路径穿越 → 4xx', async () => {
     const unknown = await fetch(`${baseUrl}/api/node?project=ghost&path=design.pen&id=title`);
     expect(unknown.status).toBe(404);
-    const escape = await fetch(`${baseUrl}/api/node?project=${name}&path=../../etc/passwd&id=title`);
-    expect(escape.status).toBe(400);
+    const traversal = await fetch(`${baseUrl}/api/node?project=${name}&path=../../etc/passwd&id=title`);
+    expect(traversal.status).toBe(400);
   });
 });
 
