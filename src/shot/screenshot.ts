@@ -42,12 +42,44 @@ export function findBrowser(): string | null {
 }
 
 export interface ShotOptions {
-  /** 像素倍率（默认 2，出图清晰） */
+  /** 像素倍率：0.2–2，缺省 0.8（给 agent 自审图：看得清又不至于太大） */
   scale?: number;
   /** 等待毫秒（字体/图片加载），默认 120 */
   settleMs?: number;
   /** 只截某个画板（id 或 name；匹配规则见 selectBoard） */
   board?: string;
+}
+
+/** 单边像素上限：超出按比例压回，只为不把内存/临时文件吃爆 */
+export const MAX_SHOT_EDGE = 8192;
+/** agent 自审图的默认倍率 */
+export const DEFAULT_SHOT_SCALE = 0.8;
+/** 倍率下限：再小就看不清字了 */
+export const MIN_SHOT_SCALE = 0.2;
+/** 倍率上限：与查看器导出的 2x 对齐 */
+export const MAX_SHOT_SCALE = 2;
+
+export interface ScalePlan {
+  /** 实际使用的倍率 */
+  scale: number;
+  /** 请求值被 [0.2, 2] 夹过 */
+  clamped: boolean;
+  /** 因 8192 上限被压过 */
+  capped: boolean;
+}
+
+/**
+ * 倍率决策：先夹进 [0.2, 2]，再按画布/画板的**设计尺寸**（1x 像素数）等比压进 8192。
+ * 1x 的定义就是查看器里的 `1:1`——画板自身的像素尺寸，所以这里量的是 CSS px。
+ */
+export function planShotScale(requested: number | undefined, width: number, height: number): ScalePlan {
+  const asked = requested !== undefined && Number.isFinite(requested) ? requested : DEFAULT_SHOT_SCALE;
+  const clampedValue = Math.min(MAX_SHOT_SCALE, Math.max(MIN_SHOT_SCALE, asked));
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  const fit = Math.min(MAX_SHOT_EDGE / w, MAX_SHOT_EDGE / h);
+  const scale = Math.min(clampedValue, fit);
+  return { scale, clamped: clampedValue !== asked, capped: scale < clampedValue };
 }
 
 export interface ShotBoard {
@@ -62,6 +94,8 @@ export interface ShotBoard {
 export interface ShotResult {
   out: string;
   canvas: { width: number; height: number };
+  /** 实际使用的倍率（请求值被夹/压后的结果） */
+  scale: number;
   /** 按画板截图时命中的画板（未指定时为 undefined） */
   board?: ShotBoard;
   warnings: string[];
@@ -112,19 +146,23 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
   writeFileSync(htmlPath, rendered.html, 'utf8');
   let clip: { x: number; y: number; width: number; height: number };
   let measuredBoard: BoardBox | undefined;
+  let usedScale: number = DEFAULT_SHOT_SCALE;
+  const extraWarnings: string[] = [];
   try {
     const browser = await chromium.launch({
       executablePath: browserPath,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
     try {
+      // 倍率先按声明尺寸估一版（自动尺寸的板子要进去量了才知道），量完再按真实 clip 收口
+      const initial = planShotScale(opts.scale, rendered.canvas.width || 1, rendered.canvas.height || 1);
       // 先给一个够大的视野：自动尺寸的板子（h 未存）只有浏览器知道真实大小
       const page = await browser.newPage({
         viewport: {
           width: Math.max(800, rendered.canvas.width, target !== undefined ? Math.ceil(target.x + 3200) : 0),
           height: Math.max(600, rendered.canvas.height, target !== undefined ? Math.ceil(target.y + 3200) : 0),
         },
-        deviceScaleFactor: opts.scale ?? 2,
+        deviceScaleFactor: initial.scale,
       });
       await page.goto(`file://${htmlPath}`);
       await page.waitForTimeout(opts.settleMs ?? 120);
@@ -200,7 +238,37 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
         });
         await page.waitForTimeout(20);
       }
-      await page.screenshot({ path: outPng, clip });
+      const plan = planShotScale(opts.scale, clip.width, clip.height);
+      usedScale = plan.scale;
+      if (plan.clamped) {
+        extraWarnings.push(`倍率 ${String(opts.scale)} 超出 0.2–2，已按 ${plan.scale}x 输出`);
+      }
+      if (plan.capped) {
+        extraWarnings.push(
+          `画板 ${clip.width}×${clip.height}（1x）按 ${plan.scale.toFixed(2)}x 输出：单边超过 ${MAX_SHOT_EDGE} 上限，已等比压回`,
+        );
+      }
+      if (Math.abs(plan.scale - initial.scale) > 1e-6) {
+        // deviceScaleFactor 是 context 级的，改不了——换一页按收口后的倍率重截
+        const finalVp = page.viewportSize();
+        await page.close();
+        const fitted = await browser.newPage({
+          viewport: {
+            width: Math.max(1, Math.ceil(finalVp?.width ?? clip.x + clip.width)),
+            height: Math.max(1, Math.ceil(finalVp?.height ?? clip.y + clip.height)),
+          },
+          deviceScaleFactor: plan.scale,
+        });
+        try {
+          await fitted.goto(`file://${htmlPath}`);
+          await fitted.waitForTimeout(opts.settleMs ?? 120);
+          await fitted.screenshot({ path: outPng, clip });
+        } finally {
+          await fitted.close();
+        }
+      } else {
+        await page.screenshot({ path: outPng, clip });
+      }
     } finally {
       await browser.close();
     }
@@ -210,7 +278,13 @@ export async function screenshotPen(penPath: string, outPng: string, opts: ShotO
   const size = statSync(outPng).size;
   if (size === 0) throw new Error('截图产物为空文件');
   const canvas = { width: Math.max(rendered.canvas.width, clip.x + clip.width), height: Math.max(rendered.canvas.height, clip.y + clip.height) };
-  const result: ShotResult = { out: outPng, canvas, warnings: rendered.warnings, browser: browserPath };
+  const result: ShotResult = {
+    out: outPng,
+    canvas,
+    scale: usedScale,
+    warnings: [...rendered.warnings, ...extraWarnings],
+    browser: browserPath,
+  };
   if (measuredBoard !== undefined) {
     result.board = {
       id: measuredBoard.id,

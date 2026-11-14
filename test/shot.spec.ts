@@ -2,13 +2,37 @@ import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { screenshotPen, findBrowser, selectBoard } from '../src/shot/screenshot.js';
+import { screenshotPen, findBrowser, planShotScale, selectBoard, MAX_SHOT_EDGE } from '../src/shot/screenshot.js';
 import type { BoardBox } from '../src/render/index.js';
 
 /** PNG IHDR 里的宽高（字节 16/20，大端） */
 function pngSize(buf: Buffer): { width: number; height: number } {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
+
+describe('倍率决策（纯函数）', () => {
+  it('缺省 0.8：agent 自审图的默认值', () => {
+    expect(planShotScale(undefined, 800, 600)).toEqual({ scale: 0.8, clamped: false, capped: false });
+  });
+
+  it('夹进 0.2–2：3x 会被压到 2x 并标记 clamped', () => {
+    expect(planShotScale(3, 200, 200)).toEqual({ scale: 2, clamped: true, capped: false });
+    expect(planShotScale(0.05, 200, 200).scale).toBe(0.2);
+  });
+
+  it('单边超过 8192 时等比压回，1x 的定义是画板设计尺寸', () => {
+    const plan = planShotScale(2, 5000, 1000);
+    expect(plan.scale).toBeCloseTo(MAX_SHOT_EDGE / 5000, 6);
+    expect(plan.capped).toBe(true);
+    // 压回后两边都不超上限
+    expect(5000 * plan.scale).toBeLessThanOrEqual(MAX_SHOT_EDGE + 1e-6);
+    expect(2 * 1000).toBeLessThanOrEqual(MAX_SHOT_EDGE);
+  });
+
+  it('本来就在范围内时不动它', () => {
+    expect(planShotScale(0.5, 1600, 900)).toEqual({ scale: 0.5, clamped: false, capped: false });
+  });
+});
 
 describe('画板选择子（纯函数）', () => {
   const boards: BoardBox[] = [
@@ -84,6 +108,13 @@ if (!hasBrowser) {
       expect(buf[1]).toBe(0x50);
       expect(buf[2]).toBe(0x4e);
       expect(buf[3]).toBe(0x47);
+    }, BROWSER_TIMEOUT_MS);
+
+    it('不给 scale → 0.8x（agent 默认审图规格）', async () => {
+      const out = join(tmp, 'out-default.png');
+      const res = await screenshotPen(penFile, out, { settleMs: 200 });
+      expect(res.scale).toBe(0.8);
+      expect(pngSize(readFileSync(out))).toEqual({ width: 640, height: 480 });
     }, BROWSER_TIMEOUT_MS);
 
     it('scale=1 时产物更小', async () => {

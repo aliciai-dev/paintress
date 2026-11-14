@@ -487,11 +487,11 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_screenshot: {
     description:
-      '渲染并截图为 PNG（默认 2x）；需要本机 Chromium/Chrome 或 PTR_BROWSER 指向的可执行文件。指定 board 时只截该画板（顶层 frame，即“一页”），而不是整张画布',
+      '渲染并截图为 PNG；倍率 0.2–2，缺省 0.8（给 agent 自己审图：看得清又不至于太大）。单边超过 8192px 会等比压回。需要本机 Chromium/Chrome 或 PTR_BROWSER 指向的可执行文件。指定 board 时只截该画板（顶层 frame，即“一页”），而不是整张画布',
     inputSchema: {
       path: z.string(),
       out: z.string().describe('输出 .png 路径'),
-      scale: z.number().int().min(1).max(4).optional().describe('像素倍率，默认 2'),
+      scale: z.number().min(0.2).max(2).optional().describe('像素倍率 0.2–2，默认 0.8；1x = 画板设计尺寸（查看器里的 1:1）'),
       board: z.string().optional().describe('只截某个画板：id 或 name；模糊命中多个时会报错并列出候选'),
     },
     run: async (a) => {
@@ -507,6 +507,7 @@ export const TOOLS: Record<string, ToolDef> = {
         out: res.out,
         canvas: res.canvas,
         ...(res.board !== undefined ? { board: res.board } : {}),
+        scale: res.scale,
         browser: res.browser,
         warnings: res.warnings,
       };

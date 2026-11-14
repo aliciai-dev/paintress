@@ -34,7 +34,7 @@ import { VERSION } from './shared/version.js';
  *   paintress move <file> <id> <parent> [--index n]
  *   paintress batch <file> '<ops-json>'
  *   paintress render <file> <out.html>
- *   paintress shot <file> <out.png> [--scale n] [--board id|name]
+ *   paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]   (缺省 0.8)
  *   paintress validate <file>
  *   paintress preset list [dir]                       项目预设列表
  *   paintress preset set <dir> <key> <type> <value>   写一条预设（type: color|radius）
