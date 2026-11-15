@@ -81,7 +81,18 @@ spawnDescribe('后台 daemon：父进程退出后 stderr 断开', () => {
     } catch {
       /* 已经退出 */
     }
-    child?.kill('SIGKILL');
+    if (child !== undefined && exitNote === null) {
+      child.kill('SIGKILL');
+      // 等到真正 exit 再结束：否则 worker 收尾之后子进程才死，
+      // 会变成「文件级失败但用例全过」的假红
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        child?.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
     rmSync(home, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
     delete process.env['PAINTRESS_HOME'];
