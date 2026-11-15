@@ -326,17 +326,25 @@ export function nodesAffectedByPreset(
   presetDoc: PenDocument | null,
   blast: PresetBlast,
 ): string[] {
+  return nodesAffectedByPresets(doc, presetDoc, [blast]);
+}
+
+/** 一次预设写入包含多个 token / 组时合并计算，只遍历一遍设计稿 */
+export function nodesAffectedByPresets(
+  doc: PenDocument,
+  presetDoc: PenDocument | null,
+  blasts: readonly PresetBlast[],
+): string[] {
   const groups: Record<string, PresetGroup> = { ...presetGroupsOf(presetDoc), ...presetGroupsOf(doc) };
-  const affectedGroups = new Set<string>();
-  if (blast.group !== undefined) affectedGroups.add(blast.group);
-  const ref = blast.token === undefined ? null : `$${blast.token}`;
-  if (ref !== null) {
+  const refs = new Set(blasts.flatMap((blast) => (blast.token === undefined ? [] : [`$${blast.token}`])));
+  const affectedGroups = new Set(blasts.flatMap((blast) => (blast.group === undefined ? [] : [blast.group])));
+  if (refs.size > 0) {
     for (const [name, group] of Object.entries(groups)) {
-      if (Object.values(group.props).includes(ref)) affectedGroups.add(name);
+      if (Object.values(group.props).some((value) => refs.has(value))) affectedGroups.add(name);
     }
   }
   const referencesRef = (value: unknown): boolean => {
-    if (ref !== null && value === ref) return true;
+    if (typeof value === 'string' && refs.has(value)) return true;
     if (Array.isArray(value)) return value.some(referencesRef);
     if (isRecord(value)) return Object.values(value).some(referencesRef);
     return false;
@@ -349,7 +357,7 @@ export function nodesAffectedByPreset(
       out.add(id);
       return;
     }
-    if (ref !== null && Object.entries(node).some(([prop, value]) => prop !== 'children' && referencesRef(value))) {
+    if (refs.size > 0 && Object.entries(node).some(([prop, value]) => prop !== 'children' && referencesRef(value))) {
       out.add(id);
     }
   });

@@ -44,6 +44,45 @@ function clampDepth(raw: number | undefined): number {
 
 export const DESIGN_EXT = new Set(['.ptr', '.pen']);
 
+/**
+ * 项目内设计稿的相对路径；侧栏与预设变更通知共用同一份目录边界。
+ * 返回相对路径统一用 `/`，调用方再按自己的用途 join 成绝对路径或拼 URL。
+ */
+export function listDesignFiles(root: string, maxDepth = DEFAULT_DEPTH): string[] {
+  const out: string[] = [];
+  const skip = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'target', '.venv', 'venv', '__pycache__']);
+  const walk = (dir: string, rel: string, depth: number): void => {
+    if (depth > maxDepth) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries.sort((a, b) => a.localeCompare(b))) {
+      if (name.startsWith('.')) continue;
+      const abs = join(dir, name);
+      let st;
+      try {
+        st = statSync(abs);
+      } catch {
+        continue;
+      }
+      const relPath = rel === '' ? name : `${rel}/${name}`;
+      if (st.isDirectory()) {
+        if (skip.has(name)) continue;
+        walk(abs, relPath, depth + 1);
+      } else if (DESIGN_EXT.has(extname(name).toLowerCase())) {
+        // `__preset.ptr` / `__components.ptr` 是项目级基础设施，走各自的接口，
+        // 不在设计稿列表里出现（否则侧栏和文件数都会被它们污染）
+        if (!name.startsWith('__')) out.push(relPath);
+      }
+    }
+  };
+  walk(root, '', 0);
+  return out;
+}
+
 export class Registry {
   private readonly projects = new Map<string, ProjectEntry>();
 
@@ -98,38 +137,7 @@ export class Registry {
 
   /** 列出项目内设计稿相对路径（深度由 entry.depth 控制，默认 3、上限 6） */
   listDesigns(entry: ProjectEntry): string[] {
-    const out: string[] = [];
-    const skip = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'target', '.venv', 'venv', '__pycache__']);
-    const walk = (dir: string, rel: string, depth: number): void => {
-      if (depth > entry.depth) return;
-      let entries: string[];
-      try {
-        entries = readdirSync(dir);
-      } catch {
-        return;
-      }
-      for (const name of entries.sort((a, b) => a.localeCompare(b))) {
-        if (name.startsWith('.')) continue;
-        const abs = join(dir, name);
-        let st;
-        try {
-          st = statSync(abs);
-        } catch {
-          continue;
-        }
-        const relPath = rel === '' ? name : `${rel}/${name}`;
-        if (st.isDirectory()) {
-          if (skip.has(name)) continue;
-          walk(abs, relPath, depth + 1);
-        } else if (DESIGN_EXT.has(extname(name).toLowerCase())) {
-          // `__preset.ptr` / `__components.ptr` 是项目级基础设施，走各自的接口，
-          // 不在设计稿列表里出现（否则侧栏和文件数都会被它们污染）
-          if (!name.startsWith('__')) out.push(relPath);
-        }
-      }
-    };
-    walk(entry.rootReal, '', 0);
-    return out;
+    return listDesignFiles(entry.rootReal, entry.depth);
   }
 
   info(entry: ProjectEntry): ProjectInfo {

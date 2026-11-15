@@ -260,3 +260,10 @@
 - 仍缺：`paintress_font` 的 `add/remove/default`（见 `FUTURE.md#Improvements`）。
 - 质量基线：`pnpm check` 0 错误、**34 文件 454 用例全绿**、`pnpm build` 通过（ui 产物 hash 未变，本轮没动前端）。
 - 证据：`.agents/implementations/2026-11-15_1854_highlight-covers-establish-adjust-and-preset-writes.md`。
+
+### 高亮评审补漏：子目录与 seed（2026-11-15）
+
+- `preset` 传目录时从只扫根目录改为递归：枚举逻辑提取成 `src/web/registry.ts#listDesignFiles`，与查看器共用深度、隐藏目录与项目文件过滤规则。
+- `preset seed apply:true` 也接入通知；新增的 `nodesAffectedByPresets` 合并计算新建 token / 组，只遍历每份设计稿一次。dry-run 不通知。
+- 两条都先有失败回归再修；`pnpm check` 0 错误、**34 文件 455 用例全绿**、`pnpm build` 通过。
+- 证据：`.agents/implementations/2026-11-15_2050_review-highlight-nested-designs-and-seed.md`。

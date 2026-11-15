@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -386,6 +386,18 @@ describe('预设类写操作也会点亮受影响的节点', () => {
     };
     makeDesign('other.ptr', 'd', 'color-brand', 'ac');
     makeDesign('third.ptr', 'e', 'color-brand', 'ad');
+    mkdirSync(join(albumDir, 'nested'), { recursive: true });
+    writeFileSync(
+      join(albumDir, 'nested/inner.ptr'),
+      JSON.stringify({
+        version: '2.22',
+        fileToken: '00000000-0000-4000-8000-0000000000ae',
+        variables: {},
+        'x-paintress': { spec: '1' },
+        children: [{ type: 'rectangle', id: 'nested-node', width: 10, height: 10, fill: '$color-brand' }],
+      }),
+      'utf8',
+    );
 
     const before = sentNotifications.changes.length;
     await TOOLS['paintress_preset']!.run({
@@ -395,8 +407,8 @@ describe('预设类写操作也会点亮受影响的节点', () => {
       type: 'color',
       value: '#445566',
     });
-    // 两张引用它的设计稿各一条通知；__preset.ptr / __components.ptr 不是设计稿，不该被通知
-    expect(sentNotifications.changes.length).toBe(before + 2);
+    // 两张根目录设计稿 + 一张子目录设计稿各一条通知；项目基础设施文件不该被通知
+    expect(sentNotifications.changes.length).toBe(before + 3);
     await Promise.all(sentNotifications.changes.slice(before));
 
     await until(async () => {
@@ -404,6 +416,54 @@ describe('预设类写操作也会点亮受影响的节点', () => {
       return body.ids.includes('d') ? body : null;
     }, 15_000);
     expect((await readAlbumChanges('third.ptr')).ids).toContain('e');
+    expect((await readAlbumChanges('nested/inner.ptr')).ids).toContain('nested-node');
     expect((await readAlbumChanges('__preset.ptr')).ids).toEqual([]);
+  }, 20_000);
+
+  it('preset seed apply 也会记录新建 token / 组点亮的节点，dry-run 不通知', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    const seedDir = mkdtempSync(join(tmpdir(), 'paintress-changes-seed-'));
+    const seedDesign = join(seedDir, 'seeded.ptr');
+    try {
+      await sendRequest({ kind: 'watch', project: 'seed', dir: seedDir });
+      writeFileSync(
+        seedDesign,
+        JSON.stringify({
+          version: '2.22',
+          fileToken: '00000000-0000-4000-8000-0000000000af',
+          variables: {},
+          'x-paintress': { spec: '1' },
+          children: [
+            { type: 'rectangle', id: 'seed-direct', width: 10, height: 10, fill: '$color-brand' },
+            { type: 'frame', id: 'seed-group', preset: 'card', width: 20, height: 20, children: [] },
+          ],
+        }),
+        'utf8',
+      );
+
+      const before = sentNotifications.changes.length;
+      const dry = (await TOOLS['paintress_preset']!.run({ path: seedDir, action: 'seed' })) as { applied: boolean };
+      expect(dry.applied).toBe(false);
+      expect(sentNotifications.changes.length).toBe(before);
+
+      const applied = (await TOOLS['paintress_preset']!.run({ path: seedDir, action: 'seed', apply: true })) as {
+        applied: boolean;
+      };
+      expect(applied.applied).toBe(true);
+      expect(sentNotifications.changes.length).toBe(before + 1);
+      await sentNotifications.changes[before];
+
+      const readSeedChanges = async (): Promise<{ ids: string[] }> => {
+        const http = await fetch(`${baseUrl}/api/changes?project=seed&path=seeded.ptr`);
+        return (await http.json()) as { ids: string[] };
+      };
+      await until(async () => {
+        const body = await readSeedChanges();
+        return body.ids.length === 2 ? body : null;
+      }, 15_000);
+      expect((await readSeedChanges()).ids.sort()).toEqual(['seed-direct', 'seed-group']);
+    } finally {
+      rmSync(seedDir, { recursive: true, force: true });
+    }
   }, 20_000);
 });

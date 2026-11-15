@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +8,15 @@ import { createDoc } from '../doc/create.js';
 import { collectIds, genId } from '../doc/id.js';
 import { validateDoc } from '../doc/validate.js';
 import { auditDoc, auditInputFrom } from '../doc/audit.js';
-import { applyAdjust, applyEstablish, nodesAffectedByPreset, planAdjust, planEstablish, readPresetDoc, type PresetBlast } from '../doc/album.js';
+import {
+  applyAdjust,
+  applyEstablish,
+  nodesAffectedByPresets,
+  planAdjust,
+  planEstablish,
+  readPresetDoc,
+  type PresetBlast,
+} from '../doc/album.js';
 import {
   applyProjectPresets,
   COMPONENTS_FILE,
@@ -43,6 +51,7 @@ import { query as q, get as g, update as u, insert as i, remove as rm, move as m
 import { expandRefs, renderDocument } from '../render/index.js';
 import { screenshotPen, findBrowser } from '../shot/screenshot.js';
 import { isDaemonRunning, sendRequest } from '../web/client.js';
+import { listDesignFiles, MAX_DEPTH } from '../web/registry.js';
 import { ensureViewer, DesignRootUnresolvedError } from '../web/autoregister.js';
 import type { PenDocument } from '../schema/index.js';
 
@@ -106,7 +115,7 @@ function notifyChanges(path: string, ids: string[]): void {
   });
 }
 
-/** 设计稿文件：传文件就是它自己，传目录就是根目录下那些设计稿（`__` 开头的是项目文件，不算） */
+/** 设计稿文件：传文件就是它自己，传目录就按查看器同一套规则递归枚举（项目文件除外） */
 function designFilesOf(from: string): string[] {
   const abs = resolve(from);
   try {
@@ -114,9 +123,8 @@ function designFilesOf(from: string): string[] {
   } catch {
     return [];
   }
-  return readdirSync(abs)
-    .filter((name) => /\.(ptr|pen)$/i.test(name) && !name.startsWith('__'))
-    .map((name) => join(abs, name));
+  // 工具进程拿不到 daemon 注册的自定义 depth；覆盖到查看器允许的上限即可
+  return listDesignFiles(abs, MAX_DEPTH).map((file) => join(abs, file));
 }
 
 /**
@@ -124,16 +132,20 @@ function designFilesOf(from: string): string[] {
  * 页面刷新本身不用管：daemon 的浏览器 SSE 同时监听 `__preset.ptr`。
  * 传进来的是目录时，项目里每个设计稿各算一遍（人可能开着其中任意一张）。
  */
-function notifyPresetBlast(from: string, blast: PresetBlast): void {
-  if (!isDaemonRunning()) return;
+function notifyPresetBlasts(from: string, blasts: readonly PresetBlast[]): void {
+  if (blasts.length === 0 || !isDaemonRunning()) return;
   for (const file of designFilesOf(from)) {
     try {
       const loaded = loadDoc(file);
-      notifyChanges(file, nodesAffectedByPreset(loaded.doc, readPresetDoc(file), blast));
+      notifyChanges(file, nodesAffectedByPresets(loaded.doc, readPresetDoc(file), blasts));
     } catch {
       /* 单张读不了不影响其余；高亮也不值得让写操作报错 */
     }
   }
+}
+
+function notifyPresetBlast(from: string, blast: PresetBlast): void {
+  notifyPresetBlasts(from, [blast]);
 }
 
 /** 最近一次字体探针报告（viewer + 截图都写进 daemon）；daemon 没跑就返回空 */
@@ -681,7 +693,14 @@ export const TOOLS: Record<string, ToolDef> = {
       const from = resolve(optStr(a, 'path') ?? process.cwd());
       const action = optStr(a, 'action') ?? 'list';
       if (action === 'seed') {
-        return { ok: true, ...seedDesignSystem(from, { apply: a['apply'] === true }) };
+        const seeded = seedDesignSystem(from, { apply: a['apply'] === true });
+        if (seeded.applied) {
+          notifyPresetBlasts(from, [
+            ...seeded.created.tokens.map((token) => ({ token })),
+            ...seeded.created.groups.map((group) => ({ group })),
+          ]);
+        }
+        return { ok: true, ...seeded };
       }
       if (action === 'list') {
         const { path, items } = listPresets(from);
