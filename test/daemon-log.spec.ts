@@ -57,6 +57,19 @@ async function freePort(): Promise<number> {
   });
 }
 
+/** 删除临时目录；daemon 可能还在写日志，撞上 ENOTEMPTY 就重试几次 */
+async function rmWithRetry(dir: string, attempts = 20): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  // 实在删不掉也不该让测试变红：临时目录会被系统回收
+}
+
 spawnDescribe('后台 daemon：父进程退出后 stderr 断开', () => {
   let home: string;
   let projectDir: string;
@@ -93,8 +106,10 @@ spawnDescribe('后台 daemon：父进程退出后 stderr 断开', () => {
         });
       });
     }
-    rmSync(home, { recursive: true, force: true });
-    rmSync(projectDir, { recursive: true, force: true });
+    // daemon 退出时会补写一行 web.log；与 rmSync 抢文件会得到 ENOTEMPTY。
+    // 临时目录清理重试几次，别让收尾竞态把整轮测试判成失败。
+    await rmWithRetry(home);
+    await rmWithRetry(projectDir);
     delete process.env['PAINTRESS_HOME'];
   });
 
