@@ -7,6 +7,7 @@ import { findBrowser } from '../src/shot/screenshot.js';
 import { startDaemon, type DaemonHandle } from '../src/web/daemon.js';
 import { sendRequest } from '../src/web/client.js';
 import { COMPONENTS_FILE, PRESET_FILE, setPreset } from '../src/doc/project.js';
+import { TOOLS } from '../src/mcp/tools.js';
 
 /**
  * 查看器交互回归（真实 Chromium + 构建产物 ui/dist）：
@@ -294,6 +295,33 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       await page.close();
     }
   });
+
+  it('变更高亮：agent 收工后撒高亮，金边立刻消失且不重渲染', async () => {
+    // 先记一次变更，页面加载时 applyChanges 会把它画上
+    await sendRequest({ kind: 'changes', path: join(dir, 'design.ptr'), ids: ['title'] });
+    const page = await openViewer();
+    try {
+      const frame = page.frameLocator('.preview');
+      let painted = false;
+      for (let i = 0; i < 100 && !painted; i++) {
+        painted = (await frame.locator('[data-node-id="title"][data-ptr-changed]').count()) > 0;
+        if (!painted) await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(painted, '页面加载后应该画上变更高亮').toBe(true);
+
+      const out = (await TOOLS['paintress_clear_changes']!.run({ path: join(dir, 'design.ptr') })) as Record<string, unknown>;
+      expect(out['ok']).toBe(true);
+
+      let gone = false;
+      for (let i = 0; i < 100 && !gone; i++) {
+        gone = (await frame.locator('[data-ptr-changed]').count()) === 0;
+        if (!gone) await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(gone, '清除后金边应消失').toBe(true);
+    } finally {
+      await page.close();
+    }
+  }, 20_000);
 
   it('标签页标题：跟着当前设计稿走，不再只有 paintress', async () => {
     const page = await openViewer();

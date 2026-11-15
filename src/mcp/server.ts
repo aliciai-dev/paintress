@@ -18,20 +18,16 @@ const SERVER_VERSION = VERSION;
 const INSTRUCTIONS = `paintress is a design tool for AI agents: design files are JSON, edited through tools and rendered by a local viewer.
 
 VIEWER — the human only sees your work in the viewer:
-- Run \`paintress web\` before the first write of a drawing session (creating, editing or showing a design) — do not wait to be asked. It ensures the viewer is running and returns immediately.
-- The window is the command's job, not yours: never launch a browser or start a process for it.
-- It is idempotent: if the viewer is already up it prints the existing pid/port/URL and exits; calling it again is safe and never starts a second process.
-- MCP equivalent: \`paintress_viewer\` returns the same URL. Append \`?file=<relative path>\` to deep-link one document.
+- Run \`paintress web\` before the first write of a drawing session, do not wait to be asked: it is idempotent (reuses a running viewer, returns its pid/port/URL) and returns immediately.
+- The window is the command's job: never launch a browser or start a process for it. MCP equivalent \`paintress_viewer\` returns the same URL; append \`?file=<relative path>\` to deep-link one document.
+- When you stop editing, call \`paintress_clear_changes\` so the change highlight stops and the human sees the final design.
 
-WORKFLOW: \`paintress_new\` → \`paintress_query\`/\`paintress_get\` for real node ids (never invent them) → \`paintress_update\`/\`insert\`/\`move\`/\`delete\` or \`paintress_batch\` → \`paintress_validate\` → \`paintress_screenshot\` to check the result with your own eyes.
-\`#1\` in the conversation is a click marker from the viewer: resolve it with \`paintress_marks\`.
+WORKFLOW: \`paintress_new\` → \`paintress_query\`/\`paintress_get\` for real node ids (never invent them) → \`paintress_update\`/\`insert\`/\`move\`/\`delete\` or \`paintress_batch\` → \`paintress_validate\` → \`paintress_screenshot\` to check the result with your own eyes. \`#1\` in the conversation is a viewer click marker: resolve it with \`paintress_marks\`.
 
-DESIGN SYSTEM — one source of truth; do not paste values:
-- Run \`paintress_project\` (or read \`designSystem\` from \`paintress_viewer\`) for the project root and the two files; never create \`__preset.ptr\` / \`__components.ptr\` yourself.
-- Before the first shape call \`paintress_preset list\`; if it is empty use \`paintress_preset seed\` (dry-run, then apply) or set tokens, and reference them as \`$key\`.
-- Before building a button, card or input call \`paintress_component list\`; insert one that fits. Use \`paintress_component add\` once the same shape is needed a second time.
-- \`paintress_font list\` shows the font registry; register families with a source and a preview. Text without a fontFamily uses the default and is reported on every read — close that gap.
-- After a batch run \`paintress_validate\`; it reports design-system drift, wrong token kinds and font gaps.`;
+DESIGN SYSTEM — one source of truth; reference, do not paste:
+- \`paintress_viewer\` returns the project root and its two files; never create \`__preset.ptr\` / \`__components.ptr\` yourself.
+- \`paintress_preset list\` before the first shape (empty → seed or set), reference tokens as \`$key\`; \`paintress_component list\` before building a button/card/input, and \`add\` once a shape repeats; \`paintress_font list\` for families — text without one is a reported gap.
+- After a batch run \`paintress_validate\`: it reports design-system drift, wrong token kinds and font gaps.`;
 
 /** 写操作前补一次查看器：这是「光画不开 web」的兜底网，不靠 agent 自觉 */
 const WRITE_TOOLS = new Set([

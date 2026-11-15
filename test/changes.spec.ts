@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startDaemon, type DaemonHandle } from '../src/web/daemon.js';
 import { sendRequest } from '../src/web/client.js';
-import { ChangesStore } from '../src/web/changes.js';
+import { CHANGE_TTL_MS, ChangesStore } from '../src/web/changes.js';
 import { loadDoc } from '../src/doc/io.js';
 import { collectIds } from '../src/doc/id.js';
 
@@ -82,6 +82,54 @@ describe('socket changes → HTTP /api/changes', () => {
     expect(body.at).toBeGreaterThan(0);
   });
 
+  it('clear-changes 按路径撤掉记录，HTTP 随即返回空', async () => {
+    await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['title'] });
+    const before = await readChanges('design.pen');
+    expect(before.ids).toContain('title');
+
+    const cleared = await sendRequest({ kind: 'clear-changes', path: join(projectDir, 'design.pen') });
+    expect(cleared.ok).toBe(true);
+    if (cleared.ok && 'cleared' in cleared) expect(cleared.cleared).toBe(1);
+    expect((await readChanges('design.pen')).ids).toEqual([]);
+  });
+
+  it('clear-changes 只清指定文件，同项目其它文件的高亮还在', async () => {
+    await sendRequest({ kind: 'watch', project: 'chg', dir: projectDir });
+    await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['title'] });
+    const other = join(projectDir, 'other.pen');
+    copyFileSync(join(projectDir, 'design.pen'), other);
+    await sendRequest({ kind: 'changes', path: other, ids: ['card'] });
+
+    await sendRequest({ kind: 'clear-changes', path: join(projectDir, 'design.pen') });
+    expect((await readChanges('design.pen')).ids).toEqual([]);
+    expect((await readChanges('other.pen')).ids).toContain('card');
+  });
+
+  it('clear-changes 会向正在看这一页的浏览器推 changes-cleared', async () => {
+    await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['title'] });
+    const controller = new AbortController();
+    const stream = await fetch(
+      `${baseUrl}/events?project=chg&path=${encodeURIComponent('design.pen')}`,
+      { signal: controller.signal },
+    );
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+
+    await sendRequest({ kind: 'clear-changes', path: join(projectDir, 'design.pen') });
+
+    let seen = '';
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !seen.includes('changes-cleared')) {
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<{ value?: Uint8Array; done: boolean }>((r) => setTimeout(() => r({ done: true }), 500)),
+      ]);
+      if (chunk.value) seen += new TextDecoder().decode(chunk.value);
+    }
+    controller.abort();
+    expect(seen).toContain('changes-cleared');
+  });
+
   it('项目外的路径被忽略', async () => {
     const res = await sendRequest({ kind: 'changes', path: '/etc/passwd', ids: ['x'] });
     expect(res.ok).toBe(true);
@@ -118,14 +166,31 @@ describe('ChangesStore 合并与过期', () => {
   it('过期后 get 返回 undefined', () => {
     const store = new ChangesStore();
     const rec = store.record('p', 'a.ptr', ['a']);
-    rec.at = Date.now() - 120_000; // 模拟两分钟前
+    rec.at = Date.now() - (CHANGE_TTL_MS + 60_000); // 越过 TTL（5 分钟）一分钟
     expect(store.get('p', 'a.ptr')).toBeUndefined();
+  });
+
+  it('未到 TTL 仍然可用（5 分钟窗口内刷新页面还能重新画上金边）', () => {
+    const store = new ChangesStore();
+    const rec = store.record('p', 'a.ptr', ['a']);
+    rec.at = Date.now() - (CHANGE_TTL_MS - 60_000);
+    expect(store.get('p', 'a.ptr')?.ids).toEqual(['a']);
+  });
+
+  it('clearFile 只清一个文件，不动同项目其它文件', () => {
+    const store = new ChangesStore();
+    store.record('p', 'a.ptr', ['a']);
+    store.record('p', 'b.ptr', ['b']);
+    expect(store.clearFile('p', 'a.ptr')).toBe(true);
+    expect(store.get('p', 'a.ptr')).toBeUndefined();
+    expect(store.get('p', 'b.ptr')?.ids).toEqual(['b']);
+    expect(store.clearFile('p', 'a.ptr')).toBe(false);
   });
 
   it('prune 清理过期条目，保留新鲜条目', () => {
     const store = new ChangesStore();
     const old = store.record('p', 'old.ptr', ['a']);
-    old.at = Date.now() - 120_000;
+    old.at = Date.now() - (CHANGE_TTL_MS + 60_000);
     store.record('p', 'fresh.ptr', ['b']);
     expect(store.prune()).toBe(1);
     expect(store.get('p', 'old.ptr')).toBeUndefined();

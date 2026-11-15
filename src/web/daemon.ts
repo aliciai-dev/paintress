@@ -368,6 +368,56 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const registryClients = new Set<import('node:http').ServerResponse>();
   /** 控制面长连接：shutdown 时必须主动结束，否则 server.close() 会一直等 agent attach */
   const controlClients = new Set<Socket>();
+  /**
+   * 按「项目 + 文件」索引的浏览器 SSE 连接：agent 说「编辑完了」时，
+   * 要能主动推一条 changes-cleared 给正在看这一页的窗口（否则金边要等人刷新才消失）。
+   */
+  const fileStreams = new Map<string, Set<NodeServerResponse>>();
+  const streamKey = (project: string, file: string): string => `${project}\u0000${file}`;
+  const broadcastChangesCleared = (project: string, file?: string): void => {
+    const payload = JSON.stringify({ project, file: file ?? null, at: Date.now() });
+    const buckets: Set<NodeServerResponse>[] = [];
+    if (file === undefined) {
+      // 没指定文件 = 整个项目：把该项目下所有文件的窗口都通知上
+      for (const [key, set] of fileStreams) {
+        if (key.startsWith(`${project}\u0000`)) buckets.push(set);
+      }
+    } else {
+      const one = fileStreams.get(streamKey(project, file));
+      if (one !== undefined) buckets.push(one);
+    }
+    for (const clients of buckets) {
+      for (const client of clients) {
+        try {
+          client.write(`event: changes-cleared\ndata: ${payload}\n\n`);
+        } catch {
+          /* 断开就断开，不需要额外处理 */
+        }
+      }
+    }
+  };
+  /**
+   * 绝对路径 → 已注册项目里的「项目 + 相对文件」。
+   * changes / clear-changes 共用：多个项目根互相包含时取最深的那一个，避免记到外层项目上。
+   */
+  const resolveRegisteredFile = (absPath: string): { project: string; file: string } | null => {
+    const abs = resolve(absPath);
+    const hit = registry
+      .all()
+      .map((entry) => ({ entry, rel: relative(entry.rootReal, abs) }))
+      .filter(
+        (c) =>
+          c.rel !== '' &&
+          c.rel !== '..' &&
+          !c.rel.startsWith('..' + '/') &&
+          !c.rel.startsWith('..' + '\\') &&
+          !c.rel.startsWith('/'),
+      )
+      .sort((a, b) => b.entry.rootReal.length - a.entry.rootReal.length)[0];
+    if (hit === undefined) return null;
+    return { project: hit.entry.name, file: hit.rel.split(/[\\/]/).join('/') };
+  };
+
   /** agent attach 总数 / 浏览器连接总数（注册表 SSE + 设计稿 SSE） */
   const agentCount = (): number => registry.all().reduce((n, p) => n + p.agents.size, 0);
   const browserCount = (): number =>
@@ -585,26 +635,39 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             case 'clear-marks':
               reply({ ok: true, cleared: marks.clear(req.project) });
               break;
+            case 'clear-changes': {
+              // agent 收工后主动撤高亮：清掉记录（刷新也不复活），并提醒开着的窗口立刻去掉金边
+              let project = req.project ?? '';
+              let file = req.file;
+              if (req.path !== undefined) {
+                const hit = resolveRegisteredFile(req.path);
+                if (hit === null) {
+                  reply({ ok: true, cleared: 0 });
+                  break;
+                }
+                project = hit.project;
+                file = hit.file;
+              }
+              if (project === '') {
+                reply({ ok: false, error: '需要 project 或 path' });
+                break;
+              }
+              if (file === undefined) {
+                broadcastChangesCleared(project, undefined);
+                reply({ ok: true, cleared: changes.clear(project) });
+                break;
+              }
+              broadcastChangesCleared(project, file);
+              reply({ ok: true, cleared: changes.clearFile(project, file) ? 1 : 0 });
+              break;
+            }
             case 'changes': {
               // req.path 应为绝对路径（调用方已 resolve）。若多个项目根互相包含，取最深根，避免记到外层项目
-              const abs = resolve(req.path);
-              const candidates = registry
-                .all()
-                .map((entry) => ({ entry, rel: relative(entry.rootReal, abs) }))
-                .filter(
-                  (c) =>
-                    c.rel !== '' &&
-                    c.rel !== '..' &&
-                    !c.rel.startsWith('..' + '/') &&
-                    !c.rel.startsWith('..' + '\\') &&
-                    !c.rel.startsWith('/'),
-                )
-                .sort((a, b) => b.entry.rootReal.length - a.entry.rootReal.length);
-              const hit = candidates[0];
-              if (hit) {
-                changes.record(hit.entry.name, hit.rel.split(/[\\/]/).join('/'), req.ids);
+              const hit = resolveRegisteredFile(req.path);
+              if (hit !== null) {
+                changes.record(hit.project, hit.file, req.ids);
               }
-              reply({ ok: true, recorded: hit ? req.ids.length : 0 });
+              reply({ ok: true, recorded: hit === null ? 0 : req.ids.length });
               break;
             }
             case 'shutdown':
@@ -1085,6 +1148,13 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         res.write(': connected\n\n');
         const token = Symbol('browser');
         entry.browsers.add(token);
+        const streamKeyHere = streamKey(entry.name, relPath);
+        let streams = fileStreams.get(streamKeyHere);
+        if (streams === undefined) {
+          streams = new Set();
+          fileStreams.set(streamKeyHere, streams);
+        }
+        streams.add(res);
         // 有人在看：撤销待执行的自动退场
         cancelAutoDetach(entry.name);
         const notifyChange = (): void => {
@@ -1100,6 +1170,9 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           clearInterval(keepAlive);
           for (const release of releases) release();
           entry.browsers.delete(token);
+          const bucket = fileStreams.get(streamKeyHere);
+          bucket?.delete(res);
+          if (bucket !== undefined && bucket.size === 0) fileStreams.delete(streamKeyHere);
           maybeScheduleAutoDetach(entry.name);
         };
         req.on('close', done);

@@ -811,6 +811,28 @@ export default function App() {
     hit?.setAttribute('data-ptr-hover', '');
   }
 
+  /**
+   * 金边高亮的保底：最后一次写入后最多再亮 5 分钟（与 daemon 的 TTL 一致）。
+   * 只靠“文件一改就重画”的话，人停在页面上会看到永远在呼吸的金边，看不清实际效果。
+   */
+  const CHANGED_TTL_MS = 5 * 60_000;
+  let changedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearChangedMarks(): void {
+    if (changedTimer !== undefined) {
+      clearTimeout(changedTimer);
+      changedTimer = undefined;
+    }
+    const doc = frameDoc();
+    if (!doc) return;
+    for (const el of doc.querySelectorAll('[data-ptr-changed]')) el.removeAttribute('data-ptr-changed');
+  }
+
+  function scheduleChangedExpiry(): void {
+    if (changedTimer !== undefined) clearTimeout(changedTimer);
+    changedTimer = setTimeout(() => clearChangedMarks(), CHANGED_TTL_MS);
+  }
+
   async function applyChanges(): Promise<void> {
     const p = activeProject();
     const f = activeFile();
@@ -824,6 +846,7 @@ export default function App() {
       for (const id of res.ids) {
         doc.querySelector(`[data-node-id="${cssEscape(id)}"]`)?.setAttribute('data-ptr-changed', '');
       }
+      scheduleChangedExpiry();
     } catch {
       /* 高亮尽力而为 */
     }
@@ -1111,9 +1134,13 @@ export default function App() {
         const selected = selectedId();
         if (panel() === 'inspect' && selected !== null) void loadInspector(p, f, selected);
       });
+      // agent 明确说「编辑完了」：不重渲染、不刷新，只把金边撤掉，让人直接看最终效果
+      source.addEventListener('changes-cleared', () => clearChangedMarks());
     }),
   );
   onCleanup(() => source?.close());
+  // 切稿/切项目时 iframe 会重建，金边本来就没了；把定时器一并收掉
+  onCleanup(() => clearChangedMarks());
 
   return (
     <div class="app">

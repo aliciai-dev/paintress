@@ -416,7 +416,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_project: {
     description:
-      'Project design-system files: resolve the registered project root, create __preset.ptr and __components.ptr if missing, and report nested duplicates that would split the design system. Use this instead of creating these files yourself.',
+      'Resolve the project root for a path and report its design-system files (creating them if missing, flagging nested duplicates). paintress_viewer already returns the same block after registering, so call this only when you have a file path and no viewer.',
     inputSchema: {
       path: z.string().optional().describe('Design file or project directory; defaults to the current working directory'),
       ensure: z.boolean().optional().describe('Create the two files when missing (default true)'),
@@ -634,7 +634,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_preset: {
     description:
-      'Project presets (album tokens and preset groups): colors, radii, spacing, font sizes and families that get tweaked repeatedly live in __preset.ptr; designs reference them as $key. action=list shows everything (including groups), set creates or updates a token, remove deletes it, seed fills a complete scale in one go (dry-run by default, only missing keys). set-group defines a type-targeted set of properties (values must be $token, e.g. {fill:"$color-brand"}); nodes opt in with preset:"<group>".',
+      'Project tokens and preset groups in __preset.ptr: designs reference a token as $key. list shows everything; set/remove write one token; seed fills a whole scale (dry-run unless apply:true); set-group defines properties for one node type (values must be $token) that nodes opt into with preset:"<group>".',
     inputSchema: {
       action: z.enum(['list', 'set', 'remove', 'seed', 'set-group', 'remove-group']),
       apply: z.boolean().optional().describe('seed only: true writes; default false returns created/skipped only'),
@@ -693,7 +693,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_font: {
     description:
-      'Project font registry (x-paintress.fonts in __preset.ptr): list shows sources, previews and the default; add registers a family; remove deletes it; default sets the default font. system/bundle require preview; css/file sources are project-relative paths that must exist; web sources are CSS URLs.',
+      'Project font registry in __preset.ptr: list, add a family, remove, or set the default used by text nodes without fontFamily. system/bundle need a preview fallback; css/file are project-relative paths that must exist; web is a CSS URL.',
     inputSchema: {
       action: z.enum(['list', 'add', 'remove', 'default']),
       path: z.string().optional().describe('Design file or project directory; defaults to the current working directory'),
@@ -758,7 +758,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_audit: {
     description:
-      'Read-only album audit: nodes whose colors/radii/spacing are literals that could be $token; orphan tokens; preset groups never referenced; dangling preset refs; literal values inside preset groups. You and the human decide what to change.',
+      'Read-only design-system audit: literals that could be $tokens, orphan tokens, unused or dangling preset groups. It only reports — you and the human decide what to change.',
     inputSchema: { path: z.string().describe('Design file path (project presets are read from its project)') },
     run: (a) => {
       const path = reqStr(a, 'path');
@@ -777,7 +777,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_establish: {
     description:
-      'Album extraction: find repeated literals (colors/radii/spacing) and suggest $tokens, and suggest preset groups from same-type nodes carrying the same property set. Dry-run by default (apply=false); apply=true writes __preset.ptr and rewrites matched nodes to references (mtime guarded).',
+      'Propose $tokens from repeated literals (colors/radii/spacing) and preset groups from same-type nodes sharing a property set. Dry-run unless apply:true, which writes __preset.ptr and rewrites matched nodes to references.',
     inputSchema: {
       path: z.string().describe('Design file path'),
       apply: z.boolean().optional().describe('true writes the preset file and rewrites nodes; default false only suggests'),
@@ -795,7 +795,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_adjust: {
     description:
-      'Album adjustment: change one value and see the blast radius first. key=change one token; group+prop=change one group property. Dry-run by default (apply=false) returns affected nodes with before->after; apply=true writes __preset.ptr only, so design references follow automatically.',
+      'Preview the blast radius of changing a token (key) or one group property (group+prop): dry-run returns affected nodes with before->after. apply:true writes __preset.ptr only — designs follow through their references.',
     inputSchema: {
       path: z.string().describe('Design file path (project presets are read from its project)'),
       key: z.string().optional().describe('Token key to change'),
@@ -831,7 +831,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_component: {
     description:
-      'Project component library: look before you build. action=list lists reusable components (reusable nodes in __components.ptr); action=insert copies one into a design (fresh ids, internal refs expanded, standalone render; copy only, no live link); action=add registers a design subtree as a component (fresh ids, nested reusable stripped, optional rename).',
+      'Project component library in __components.ptr: look here before drawing anything reusable. list returns reusable components; insert copies one into a design (fresh ids, no live link); add registers a design subtree as a component.',
     inputSchema: {
       action: z.enum(['list', 'insert', 'add']),
       path: z.string().optional().describe('Design file or project directory; for insert this is the target design'),
@@ -916,7 +916,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_convert: {
     description:
-      'Convert a .pen design file to .ptr (the paintress flavor): reads, validates and writes a new .ptr file with a fresh fileToken and x-paintress metadata. Does not modify the source; refuses to overwrite unless overwrite=true. The two flavors are identical today, but .ptr may evolve.',
+      'Convert a .pen file to .ptr (fresh fileToken; source untouched; refuses to overwrite unless overwrite:true). The flavors are identical today, but .ptr may evolve.',
     inputSchema: {
       path: z.string().describe('Source .pen path'),
       out: z.string().optional().describe('Target .ptr path; defaults to the source with .ptr extension'),
@@ -957,7 +957,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_render: {
     description:
-      'Render a design to an HTML file (each node carries data-node-id); returns the output path and canvas size. Project fonts are injected from the registry (web/css/file); embedFonts=true inlines file fonts as data URIs.',
+      'Render a design to a standalone HTML file (every node keeps data-node-id) — the artifact a human opens. Project fonts come from the registry; embedFonts inlines file fonts.',
     inputSchema: {
       path: z.string(),
       out: z.string().describe('Output .html path'),
@@ -1002,7 +1002,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_screenshot: {
     description:
-      'Render and screenshot to PNG. Scale 0.2-2, default 0.8 (for agent review: legible without being huge); either edge over 8192px is scaled back proportionally. Needs local Chromium/Chrome or PTR_BROWSER. Pass board to capture one board (a top-level frame, i.e. one page) instead of the whole canvas.',
+      'Screenshot a design to PNG for your own review. scale 0.2-2, default 0.8 (agent-review size); either edge is capped at 8192px. Pass board to capture one board instead of the whole canvas. Needs local Chrome/Chromium or PTR_BROWSER.',
     inputSchema: {
       path: z.string(),
       out: z.string().describe('Output .png path'),
@@ -1027,6 +1027,26 @@ export const TOOLS: Record<string, ToolDef> = {
         ...(res.fonts !== undefined ? { fonts: res.fonts } : {}),
         warnings: res.warnings,
       };
+    },
+  },
+
+  paintress_clear_changes: {
+    description:
+      'Stop the change highlight (pulsing gold ring) once editing is done so the user sees the final design; the open viewer updates instantly. It also fades by itself 5 minutes after the last write.',
+    inputSchema: {
+      path: z.string().describe('Design file whose highlight to clear (.ptr / .pen)'),
+    },
+    run: async (a) => {
+      const path = optStr(a, 'path');
+      if (path === undefined) throw new Error('需要 design file path');
+      if (!isDaemonRunning()) return { ok: true, cleared: 0, note: 'paintress web 未运行：本来就没有高亮' };
+      try {
+        // 与写操作的 changes 记录对称：daemon 按绝对路径找到「项目 + 相对文件」
+        return await sendRequest({ kind: 'clear-changes', path: resolve(path) }, 2000);
+      } catch (cause) {
+        // 高亮的收尾不值得让 agent 报错：控制面不通就当作没清
+        return { ok: true, cleared: 0, note: cause instanceof Error ? cause.message : String(cause) };
+      }
     },
   },
 

@@ -13,8 +13,12 @@ export interface ChangeSet {
 
 /** 同一次操作内的多次写入合并窗口 */
 const MERGE_WINDOW_MS = 1500;
-/** 高亮有效期：超过则视为过期，前端不再展示 */
-const TTL_MS = 60_000;
+/**
+ * 高亮有效期：最后一次写入起算。
+ * 客户端会用同一个窗口自己把已画上的金边撤掉（长时间停留的页面不会永远闪）；
+ * 这里管的是「刷新 / 重渲染后还能不能重新画上」，两边保持同一个值。
+ */
+const TTL_MS = 5 * 60_000;
 
 export class ChangesStore {
   private readonly byKey = new Map<string, ChangeSet>();
@@ -55,6 +59,11 @@ export class ChangesStore {
       }
     }
     return n;
+  }
+
+  /** 只清一个文件（agent 说「编辑完了，把高亮去掉」时走这里） */
+  clearFile(project: string, file: string): boolean {
+    return this.byKey.delete(ChangesStore.key(project, file));
   }
 
   /** 清理过期条目（由调用方按需触发，避免无限增长） */

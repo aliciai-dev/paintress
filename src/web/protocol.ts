@@ -15,6 +15,7 @@ export type ClientRequest =
   | { kind: 'clear-marks'; project: string }
   | { kind: 'fonts'; project: string }
   | { kind: 'changes'; path: string; ids: string[] }
+  | { kind: 'clear-changes'; project?: string; file?: string; path?: string }
   | { kind: 'shutdown' };
 
 export interface ProjectInfo {
@@ -42,6 +43,7 @@ export type ServerResponse =
   | { ok: true; mark: Mark }
   | { ok: true; cleared: number }
   | { ok: true; recorded: number }
+  | { ok: true; cleared: number }
   | { ok: true; reports: { path: string; checked: string[]; missing: string[] }[] }
   | { ok: true; shutdown: true }
   | { ok: false; error: string; hint?: string; markers?: string[] };
