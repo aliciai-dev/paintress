@@ -77,7 +77,17 @@ export const StrokeWidth = z.union([
   z.object({ top: NumOrVar.optional(), right: NumOrVar.optional(), bottom: NumOrVar.optional(), left: NumOrVar.optional() }).passthrough(),
 ]);
 
-export const StrokeBlock = {
+/**
+ * 描边块。显式标注字段类型：声明产物里只留 `typeof Fills` 这样的引用，
+ * 而不是把各 union 的完整推断再内联一份（passthrough 展开会成倍膨胀）。
+ */
+export const StrokeBlock: {
+  stroke: z.ZodOptional<typeof Fills>;
+  strokeWidth: z.ZodOptional<typeof StrokeWidth>;
+  strokeLinecap: z.ZodOptional<typeof StrokeCap>;
+  strokeLinejoin: z.ZodOptional<typeof StrokeJoin>;
+  strokeAlignment: z.ZodOptional<typeof StrokeAlign>;
+} = {
   stroke: Fills.optional(),
   strokeWidth: StrokeWidth.optional(),
   strokeLinecap: StrokeCap.optional(),
@@ -113,8 +123,37 @@ export const ShaderEffect = z
 export const EffectEntry = z.union([BlurEffect, BackgroundBlurEffect, ShadowEffect, ShaderEffect]);
 export const Effects = z.union([EffectEntry, z.array(EffectEntry)]);
 
-export const GraphicsBlock = {
+export const GraphicsBlock: {
+  fill: z.ZodOptional<typeof Fills>;
+  stroke: z.ZodOptional<typeof Fills>;
+  strokeWidth: z.ZodOptional<typeof StrokeWidth>;
+  strokeLinecap: z.ZodOptional<typeof StrokeCap>;
+  strokeLinejoin: z.ZodOptional<typeof StrokeJoin>;
+  strokeAlignment: z.ZodOptional<typeof StrokeAlign>;
+  effect: z.ZodOptional<typeof Effects>;
+} = {
   fill: Fills.optional(),
   ...StrokeBlock,
   effect: Effects.optional(),
 };
+
+/* ------------------------------------------------------------------ *
+ * 与上面各 zod schema 同名的类型别名。
+ * 手写公共类型（节点 / 文档接口）直接引用它们：声明产物里只留一个别名，
+ * 不会把 zod 的深层推断整段展开（否则 .d.ts 会膨胀到 1.5 MB，见 typed.ts）。
+ * ------------------------------------------------------------------ */
+
+export type SolidFill = z.infer<typeof SolidFill>;
+export type GradientFill = z.infer<typeof GradientFill>;
+export type ImageFill = z.infer<typeof ImageFill>;
+export type ShaderFill = z.infer<typeof ShaderFill>;
+export type MeshGradientFill = z.infer<typeof MeshGradientFill>;
+export type FillEntry = z.infer<typeof FillEntry>;
+export type Fills = z.infer<typeof Fills>;
+export type StrokeWidth = z.infer<typeof StrokeWidth>;
+export type BlurEffect = z.infer<typeof BlurEffect>;
+export type BackgroundBlurEffect = z.infer<typeof BackgroundBlurEffect>;
+export type ShadowEffect = z.infer<typeof ShadowEffect>;
+export type ShaderEffect = z.infer<typeof ShaderEffect>;
+export type EffectEntry = z.infer<typeof EffectEntry>;
+export type Effects = z.infer<typeof Effects>;

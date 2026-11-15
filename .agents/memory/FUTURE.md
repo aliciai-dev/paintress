@@ -85,7 +85,6 @@
 
 | 条目 | 是什么 | 为什么等 | 触发条件 |
 | --- | --- | --- | --- |
-| `dts` 生成 | 发类型产物 | `NodeSchema` 的 zod 推断超 TS7056；硬注解后 `index.d.ts` 1548 KB（包体 164 KB → 1.67 MB） | 要么全量显式注解瘦身，要么按需导出 + api-extractor；出现「要写 TS 消费方」的需求 |
 | tsdown `define` 警告 | `pnpm build` 打出 `Invalid input options … "define"`，产物与自检正常 | 属构建配置与 tsdown 版本兼容，非端口梯次改动引入；先记录不动 | tsdown 升级时一并核对；或构建输出开始真正异常 |
 | Vitest → `node:test` | 换测试运行时 | 项目只用 `describe`/`it`/`expect`，迁移约半天；纯偏好 | operator 认为依赖体积/供应链复杂度是问题时 |
 

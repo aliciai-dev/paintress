@@ -6,8 +6,8 @@
  * （`paintress/mcp` 指向不存在的文件、daemon 找不到 `ui/dist` 而降级）。
  * 所以把「package.json 声明的入口」逐个落地检查，作为 `prepack` 的一部分。
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,9 +36,14 @@ function check(rel, what) {
 
 // 1) package.json 里声明的每个入口都必须真实存在
 for (const [key, value] of Object.entries(pkg.exports ?? {})) {
-  const target = typeof value === 'string' ? value : value?.import;
-  if (typeof target === 'string') check(target.replace(/^\.\//, ''), `exports["${key}"]`);
+  const targets = typeof value === 'string' ? { import: value } : value;
+  for (const [condition, target] of Object.entries(targets ?? {})) {
+    if (typeof target !== 'string') continue;
+    check(target.replace(/^\.\//, ''), `exports["${key}"].${condition}`);
+  }
 }
+if (typeof pkg.types === 'string') check(pkg.types.replace(/^\.\//, ''), 'types');
+if (typeof pkg.main === 'string') check(pkg.main.replace(/^\.\//, ''), 'main');
 for (const [bin, target] of Object.entries(pkg.bin ?? {})) {
   const raw = String(target);
   // npm 11 起会把带 ./ 的 bin 当无效值改写，并在 publish 时打 warning，这里直接拦住
@@ -66,6 +71,46 @@ if (existsSync(cliPath)) {
   const hasShebang = head.startsWith('#!');
   checked.push(`${hasShebang ? '✓' : '✗'} dist/cli.js shebang`);
   if (!hasShebang) errors.push('dist/cli.js 缺少 shebang，bin 无法直接执行');
+}
+
+// 4b) 声明产物必须自成一体：相对 import 指向的文件得真实存在
+//     （chunk 名带 hash 时最容易出这种事：d.ts 改名而引用没跟上）
+function walkDts(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const abs = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkDts(abs));
+    else if (entry.name.endsWith('.d.ts')) out.push(abs);
+  }
+  return out;
+}
+
+let dangling = 0;
+const dtsFiles = walkDts(join(root, 'dist'));
+for (const file of dtsFiles) {
+  const code = readFileSync(file, 'utf8');
+  const rel = relative(root, file);
+  for (const [, spec] of code.matchAll(/from\s+["'](\.{1,2}\/[^"']+)["']/g)) {
+    const target = resolve(dirname(file), spec).replace(/\.js$/, '.d.ts');
+    if (!existsSync(target)) {
+      dangling++;
+      errors.push(`${rel} 引用了不存在的 ${spec}`);
+    }
+  }
+}
+checked.push(`${dangling === 0 ? '✓' : '✗'} dist/**/*.d.ts  (${dtsFiles.length} 个声明文件，相对引用均可解析)`);
+
+// 4c) 声明体积上限：新导出 schema 漏掉输出类型标注时，passthrough 推断会重新膨胀到 MB 级
+//     （`pnpm check` 是 noEmit，抓不到；守门员是构建，这里再上一层保险，见 ARCHITECTURE.md#D-013）
+const dtsEntry = join(root, 'dist/index.d.ts');
+if (existsSync(dtsEntry)) {
+  const size = statSync(dtsEntry).size;
+  const limit = 512 * 1024;
+  const ok = size <= limit;
+  checked.push(`${ok ? '✓' : '✗'} dist/index.d.ts 体积 ${(size / 1024).toFixed(0)} KB（上限 512 KB）`);
+  if (!ok) {
+    errors.push(`dist/index.d.ts 膨胀到 ${(size / 1024).toFixed(0)} KB：检查新导出的 zod schema 是否漏了输出类型标注`);
+  }
 }
 
 // 5) MCP Registry 清单：版本号必须与 package.json 一致，否则注册表里是旧版本

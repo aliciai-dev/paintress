@@ -243,3 +243,12 @@
 - 审查补齐：后台启动保留失败明细、并发启动复用胜者且不重复弹窗、`--bind` 冲突不再静默、all 模式无网卡地址不假成功、跳级后精简页显示实际端口；`open-browser` 真正复用 `shared/wsl.ts` 的 `isWsl`。
 - 质量基线：双端 `tsc` 0 错误、**32 文件 417 用例全绿**、`pnpm build` 通过。
 - 证据：`specs/web-bind-ladder.md`；`.agents/implementations/2026-11-15_0412_6033-wsl-0-0-0-0-agent.md`、`2026-11-15_0426_review-startup-reuse-diagnostics.md`；决策 `ARCHITECTURE.md#D-012`。
+
+### 类型产物（2026-11-15）
+
+- `dts` 债务收口：`tsdown` 恢复声明产出，包终于带 `.d.ts`（此前 0.1.x 干脆不发）。
+- 做法：`src/schema/` 分出**手写公共类型面**（`*Node` / `PenDocument` / `PtrDocument`），schema 用 `TypedSchema<T>` / `TypedObject<T>` 显式标注输出；一致性由 `AssertSame` 编译期断言把关（断言不导出、不进声明）；`GraphicsBlock` / `StrokeBlock` 按 `typeof Fills` 引用标注，避免 union 内联多份。
+- 产物名固定（`hash: false`）→ `dist/index.d.ts`，`exports` 同时给 `types` 与 `import`；`verify:pkg` 增加「声明文件存在 + 相对引用可解析 + 体积上限」三项。
+- 体积：`index.d.ts` 1548 KB → **110 KB**（gzip 13 KB）；整包 tarball 从 164 KB 级上升到 ~330 KB，仍远小于注解前的 1.67 MB。
+- 质量基线：`pnpm check` 0 错误、**34 文件 440 用例全绿**、`pnpm build` + `verify:pkg` 通过；另用一个独立 TS 消费方工程编译验证 `PenDocument` / `PenNode` / `FrameSchema.shape` 等公共面可用。
+- 证据：`.agents/implementations/2026-11-15_1548_dts-debt.md`；决策 `ARCHITECTURE.md#D-013`。

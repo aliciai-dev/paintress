@@ -46,6 +46,8 @@ export const CornerRadius = z.union([
 
 export type VariableRef = z.infer<typeof VariableRef>;
 export type NumOrVar = z.infer<typeof NumOrVar>;
+export type BoolOrVar = z.infer<typeof BoolOrVar>;
+export type StringOrVar = z.infer<typeof StringOrVar>;
 export type ColorOrVar = z.infer<typeof ColorOrVar>;
 export type Sizing = z.infer<typeof Sizing>;
 export type Padding = z.infer<typeof Padding>;

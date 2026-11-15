@@ -4,7 +4,9 @@ export default defineConfig({
   entry: ['src/index.ts', 'src/cli.ts', 'src/mcp/server.ts'],
   format: 'esm',
   target: 'node22',
-  // dts 暂关：zod passthrough 推断类型超过 TS 序列化上限（TS7056）。
-  // 发布前给导出 schema 加显式注解后恢复。见 specs/PLAN.md 未决问题。
-  dts: false,
+  // 产物名写死（不带内容 hash）：exports 里的 types / import 指向固定路径。
+  hash: false,
+  // 声明产物已可用：schema 的输出类型由 src/schema/typed.ts 显式标注收敛，
+  // 不再触发 TS7056，index.d.ts 约 105 KB（此前推断展开为 1.5 MB）。
+  dts: true,
 });

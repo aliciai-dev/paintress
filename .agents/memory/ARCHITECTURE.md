@@ -156,3 +156,15 @@
 - **后果**：默认 URL 从 3316 变 6033；跳级或 `bind=all` 时给人打开的地址可能是 `http://<wsl-ip>:6033/`；`0.0.0.0` 会暴露到局域网（沿用「本地工具、不做鉴权」的既有立场，只在输出与文档明示）；`ensureDaemon` 等待上限 6s → 15s。
 - **证据**：`specs/web-bind-ladder.md`、`test/bind-ladder.spec.ts`、`.agents/implementations/`（本轮变更记录）。
 - **日期**：2026-11-15
+
+### D-013 — 公共类型面手写、schema 只负责运行时，dts 靠显式标注收敛
+
+- **背景**（2026-11-15 实测）：`dts: false` 挂了两年的债。裸推断下 zod passthrough 的输出类型会被整段序列化进 `.d.ts`：`NodeSchema` 先撞 TS 序列化上限（TS7056），勉强加上注解后 `index.d.ts` 也有 1548 KB（包体 164 KB → 1.67 MB），所以 0.1.x 干脆不发类型产物。
+- **决定**：
+  1. `src/schema/` 一分为二：**运行时**是 zod schema，**公共类型面**是手写 interface（`NodeBaseFields` / `*Node` / `PenDocument` 等）；schema 用 `TypedSchema<T>` / `TypedObject<T>`（`src/schema/typed.ts`）显式标注输出类型；
+  2. 手写形状与 zod 推断的一致性用编译期断言 `AssertSame<z.infer<typeof 未导出的同一 const>, 手写类型>` 把关——断言常量不导出、不进 `.d.ts`、不参与运行时，但多一个字段或少一个字段都会让 `pnpm check` 失败；
+  3. 组合块（`GraphicsBlock` / `StrokeBlock`）按 `typeof Fills` 之类的引用标注，避免同一个 union 在声明里被内联多份；
+  4. `hash: false` 让产物名固定（`dist/index.d.ts`），`exports` 同时给 `types` 与 `import`。
+- **后果**：`index.d.ts` 约 105 KB（gzip 13 KB）；**新增/改动导出 schema 必须带输出类型标注**，否则 `pnpm build`（走 tsc 的声明生成）报 TS7056 —— `pnpm check` 是 `noEmit`，抓不到这条；`UnknownNode.type: string` 使 `node.type === 'text'` 的收窄仍保留 UnknownNode 分支（与旧推断行为一致，消费方需断言）。
+- **证据**：`src/schema/typed.ts`、`tsdown.config.ts`、`scripts/verify-package.mjs`；`.agents/implementations/2026-11-15_1548_dts-debt.md`。
+- **日期**：2026-11-15

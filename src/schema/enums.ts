@@ -26,3 +26,21 @@ export const IconLibrary = z.enum([
   'phosphor',
 ]);
 export const PositionMode = z.enum(['auto', 'absolute']);
+
+/** 与上面各 zod enum 同名的类型别名：供手写公共类型（src/schema/typed.ts）引用，避免推断链扩散。 */
+export type LayoutDir = z.infer<typeof LayoutDir>;
+export type MainAxis = z.infer<typeof MainAxis>;
+export type CrossAxis = z.infer<typeof CrossAxis>;
+export type BlendMode = z.infer<typeof BlendMode>;
+export type GradientType = z.infer<typeof GradientType>;
+export type ImageFit = z.infer<typeof ImageFit>;
+export type FillRule = z.infer<typeof FillRule>;
+export type StrokeCap = z.infer<typeof StrokeCap>;
+export type StrokeJoin = z.infer<typeof StrokeJoin>;
+export type StrokeAlign = z.infer<typeof StrokeAlign>;
+export type TextAlign = z.infer<typeof TextAlign>;
+export type TextAlignVertical = z.infer<typeof TextAlignVertical>;
+export type TextGrowth = z.infer<typeof TextGrowth>;
+export type ShadowKind = z.infer<typeof ShadowKind>;
+export type IconLibrary = z.infer<typeof IconLibrary>;
+export type PositionMode = z.infer<typeof PositionMode>;

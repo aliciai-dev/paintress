@@ -13,11 +13,14 @@
     "pnpm": ">=12"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./mcp": {
+      "types": "./dist/mcp/server.d.ts",
       "import": "./dist/mcp/server.js"
     }
   },
