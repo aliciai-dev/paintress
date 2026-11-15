@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { VERSION } from '../shared/version.js';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import {
-  closeSync, existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync,
+  appendFileSync, closeSync, existsSync, openSync, readFileSync, statSync, truncateSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -13,7 +13,7 @@ import { Registry, type ProjectEntry } from './registry.js';
 import { MarksStore } from './marks.js';
 import { ChangesStore } from './changes.js';
 import { LineDecoder, encodeLine, type ClientRequest, type ServerResponse } from './protocol.js';
-import { lockPath, pidPath, safeJoin, socketPath } from './paths.js';
+import { lockPath, pidPath, runtimeDir, safeJoin, socketPath } from './paths.js';
 import { guardProjectRoot } from './design-root.js';
 import { WatchManager } from './watcher.js';
 import { VersionChecker } from './update-check.js';
@@ -295,7 +295,41 @@ export class FontReportStore {
   }
 }
 
+/** 日志文件上限：超过就从头写，避免常驻 daemon 无限长大 */
+const LOG_FILE_MAX = 512 * 1024;
+
+/**
+ * daemon 的日志出口：stderr 可能是**已经断开的管道**。
+ *
+ * 后台 daemon 由 CLI 用 `stdio: [ignore, ignore, pipe]` 拉起，stderr 的读端就是那个 CLI 进程；
+ * 它一退出，daemon 再 `process.stderr.write()` 就会拿到 EPIPE —— 未处理的 'error'
+ * 会把常驻进程直接打死（解绑项目、建项目文件、绑定降级日志都会走到这里）。
+ * 所以一律经开这里：写 stderr 失败就吞掉，同时落一份 `web.log`，
+ * 进程真出事后还有现场可查（这次就是这样无从查证的）。
+ */
+function daemonLog(line: string): void {
+  const text = `paintress web: ${line}\n`;
+  try {
+    process.stderr.write(text);
+  } catch {
+    /* stderr 已断开：只当不可用，不能影响服务 */
+  }
+  try {
+    const file = join(runtimeDir(), 'web.log');
+    try {
+      if (statSync(file).size > LOG_FILE_MAX) truncateSync(file, 0);
+    } catch {
+      /* 文件还不存在 */
+    }
+    appendFileSync(file, `${new Date().toISOString()} ${text}`);
+  } catch {
+    /* 落盘是 best-effort：写不了日志不是服务错误 */
+  }
+}
+
 export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
+  // stderr 失效只该丢一行日志，不该结束进程。写管道是异步报错的，光 try/catch 盖不住。
+  if (process.stderr.listenerCount('error') === 0) process.stderr.on('error', () => {});
   const releaseLock = acquireLock();
   const registry = new Registry();
   const marks = new MarksStore();
@@ -399,7 +433,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     if (!registry.all().some((p) => p.rootReal === entry.rootReal)) {
       watchers.unwatchDesigns(entry.rootReal);
     }
-    if (!opts.quiet) process.stderr.write(`paintress web: 解绑项目 ${entry.name}（${reason}）\n`);
+    if (!opts.quiet) daemonLog(`解绑项目 ${entry.name}（${reason}）`);
     notifyRegistry();
     return true;
   }
@@ -499,10 +533,10 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 try {
                   const created = ensureProjectScaffold(entry.rootReal).created;
                   if (created.length > 0 && !opts.quiet) {
-                    process.stderr.write(`paintress web: 项目 ${entry.name} 初始化 ${created.map((f) => relative(entry.rootReal, f)).join('、')}\n`);
+                    daemonLog(`项目 ${entry.name} 初始化 ${created.map((f) => relative(entry.rootReal, f)).join('、')}`);
                   }
                 } catch (cause) {
-                  process.stderr.write(`paintress web: 项目脚手架创建失败（${cause instanceof Error ? cause.message : String(cause)}）\n`);
+                  daemonLog(`项目脚手架创建失败（${cause instanceof Error ? cause.message : String(cause)}）`);
                 }
               }
               syncProjectRoots();
@@ -1281,7 +1315,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       nonce: instanceNonce,
       ...(opts.port !== undefined ? { requestedPort: opts.port } : {}),
       ...(opts.bind !== undefined ? { bind: opts.bind } : {}),
-      ...(opts.quiet === true ? {} : { log: (line: string) => process.stderr.write(`paintress web: ${line}\n`) }),
+      ...(opts.quiet === true ? {} : { log: (line: string) => daemonLog(line) }),
     });
   } catch (cause) {
     // 起不来就不能把单实例锁留在地上：否则下一次启动会被「已在运行」挡住
@@ -1368,7 +1402,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     if (closingPromise !== null) return closingPromise;
     closing = true;
     closingPromise = (async () => {
-      if (!opts.quiet) process.stderr.write(`paintress web: 退出（${reason}）\n`);
+      if (!opts.quiet) daemonLog(`退出（${reason}）`);
       clearInterval(idleTimer);
       if (registryTimer !== null) clearTimeout(registryTimer);
       for (const timer of autoDetachTimers.values()) clearTimeout(timer);
