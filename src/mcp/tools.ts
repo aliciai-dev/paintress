@@ -1032,7 +1032,7 @@ export const TOOLS: Record<string, ToolDef> = {
 
   paintress_clear_changes: {
     description:
-      'Stop the change highlight (pulsing gold ring) once editing is done so the user sees the final design; the open viewer updates instantly. It also fades by itself 5 minutes after the last write.',
+      'Stop the change highlight (pulsing gold ring) once editing is done so the user sees the final design; the open viewer updates instantly. It also fades by itself 3 minutes after the last write.',
     inputSchema: {
       path: z.string().describe('Design file whose highlight to clear (.ptr / .pen)'),
     },

@@ -29,6 +29,7 @@ import { Confirm, Modal } from './confirm';
 import { isNewer } from '../../src/shared/version-compare.js';
 import { bindViewport, type ViewportBinding } from './frame-viewport';
 import { FRAME_STYLE } from './frame-style';
+import { changedRemainingMs } from './changed';
 import { parseViewport } from './viewport';
 import {
   CanvasBgSwitch,
@@ -812,10 +813,9 @@ export default function App() {
   }
 
   /**
-   * 金边高亮的保底：最后一次写入后最多再亮 5 分钟（与 daemon 的 TTL 一致）。
+   * 金边高亮的保底：最后一次写入后最多再亮 3 分钟（与 daemon 的 TTL 一致）。
    * 只靠“文件一改就重画”的话，人停在页面上会看到永远在呼吸的金边，看不清实际效果。
    */
-  const CHANGED_TTL_MS = 5 * 60_000;
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
 
   function clearChangedMarks(): void {
@@ -828,12 +828,14 @@ export default function App() {
     for (const el of doc.querySelectorAll('[data-ptr-changed]')) el.removeAttribute('data-ptr-changed');
   }
 
-  function scheduleChangedExpiry(): void {
+  function scheduleChangedExpiry(delayMs: number): void {
     if (changedTimer !== undefined) clearTimeout(changedTimer);
-    changedTimer = setTimeout(() => clearChangedMarks(), CHANGED_TTL_MS);
+    changedTimer = setTimeout(() => clearChangedMarks(), delayMs);
   }
 
   async function applyChanges(): Promise<void> {
+    // 先收掉上一份的定时器：切到没有变更的稿子时，旧计时器不该继续活着
+    clearChangedMarks();
     const p = activeProject();
     const f = activeFile();
     if (!p || !f) return;
@@ -841,12 +843,15 @@ export default function App() {
       const res = await fetchChanges(p, f);
       // 过期由 daemon 的 TTL 判定（/api/changes 过期即返回空），前端不再叠加第二套阈值
       if (!res.ok || res.ids.length === 0) return;
+      const remaining = changedRemainingMs(res.at);
+      if (remaining === 0) return;
       const doc = frameDoc();
       if (!doc) return;
       for (const id of res.ids) {
         doc.querySelector(`[data-node-id="${cssEscape(id)}"]`)?.setAttribute('data-ptr-changed', '');
       }
-      scheduleChangedExpiry();
+      // 从最后写入起算，不是从本次打开页面起算：开了 2 分钟的变更只剩 1 分钟可亮
+      scheduleChangedExpiry(remaining);
     } catch {
       /* 高亮尽力而为 */
     }

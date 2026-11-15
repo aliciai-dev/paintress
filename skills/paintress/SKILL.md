@@ -91,7 +91,7 @@ Two project-level files keep a design consistent. Both are created automatically
 6. **After a batch, validate.** `paintress_validate` catches structural mistakes before the user opens the file.
 7. **Presets before pixels, components before building, fonts before text.** See above: colors and radii go through `paintress_preset`, the component library is checked before anything new is drawn, and text nodes get a registered font (the default is a reported gap, not a result).
 8. **Screenshots are for you.** `paintress_screenshot` is how you look at the design; the HTML viewer is for the human. When a document has several boards, pass `board` to get just that page — an ambiguous name errors out and lists the candidates rather than guessing.
-9. **Hand the design back when you stop.** Every write paints a pulsing gold ring on the nodes you touched. When you are done with a round, call `paintress_clear_changes` with the file path so the human sees the final design instead of an animation; it takes effect immediately, without a rerender. The ring also fades by itself five minutes after the last write, so this is a courtesy on top of the fallback — never leave highlight-clearing as the user's job.
+9. **Hand the design back when you stop.** Every write paints a pulsing gold ring on the nodes you touched. When you are done with a round, call `paintress_clear_changes` with the file path so the human sees the final design instead of an animation; it takes effect immediately, without a rerender. The ring also fades by itself three minutes after the last write, so this is a courtesy on top of the fallback — never leave highlight-clearing as the user's job.
 
 ## Node fields worth knowing
 

@@ -166,11 +166,11 @@ describe('ChangesStore 合并与过期', () => {
   it('过期后 get 返回 undefined', () => {
     const store = new ChangesStore();
     const rec = store.record('p', 'a.ptr', ['a']);
-    rec.at = Date.now() - (CHANGE_TTL_MS + 60_000); // 越过 TTL（5 分钟）一分钟
+    rec.at = Date.now() - (CHANGE_TTL_MS + 60_000); // 越过 TTL（3 分钟）一分钟
     expect(store.get('p', 'a.ptr')).toBeUndefined();
   });
 
-  it('未到 TTL 仍然可用（5 分钟窗口内刷新页面还能重新画上金边）', () => {
+  it('未到 TTL 仍然可用（3 分钟窗口内刷新页面还能重新画上金边）', () => {
     const store = new ChangesStore();
     const rec = store.record('p', 'a.ptr', ['a']);
     rec.at = Date.now() - (CHANGE_TTL_MS - 60_000);

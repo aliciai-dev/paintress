@@ -18,7 +18,7 @@ const MERGE_WINDOW_MS = 1500;
  * 客户端会用同一个窗口自己把已画上的金边撤掉（长时间停留的页面不会永远闪）；
  * 这里管的是「刷新 / 重渲染后还能不能重新画上」，两边保持同一个值。
  */
-const TTL_MS = 5 * 60_000;
+const TTL_MS = 3 * 60_000;
 
 export class ChangesStore {
   private readonly byKey = new Map<string, ChangeSet>();
