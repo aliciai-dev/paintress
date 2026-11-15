@@ -231,7 +231,7 @@ function evaluate(dir: string, name: string, depth: number): RootCandidate {
 function childDirs(from: string): { dir: string; name: string }[] {
   let names: string[];
   try {
-    names = readdirSync(from).sort();
+    names = readdirSync(from).sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }
@@ -262,7 +262,10 @@ function describe(root: string, reason: RootReason, from: string): string {
     case 'cwd':
       return `用${where}注册`;
     case 'none':
-      return '没找到像设计目录的地方，需要显式指定';
+      return '没找到像设计目录的地方，需要用户指定';
+    default:
+      // 新增 RootReason 时忘了补文案也不能让 message 变成 undefined
+      return `用 ${root} 注册`;
   }
 }
 
