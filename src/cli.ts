@@ -216,7 +216,8 @@ function cwdDesignRootInfo(): { designRoot: Record<string, unknown>; hint?: stri
   if (!decision.confident) {
     return {
       designRoot,
-      hint: `${decision.message}。建议先建一个设计目录（如 design/），或在项目根写 ${'paintress.json'}：{"root": "design"}。`,
+      // 人看的两种落地方式；问用户/别自己建是 agent 侧（MCP next + SKILL）的事
+      hint: `${decision.message}。要放设计稿：新建设计目录（如 design/）再 paintress watch <name> design，或在项目根写 paintress.json：{"root": "design"}。`,
     };
   }
   return { designRoot };

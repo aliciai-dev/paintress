@@ -262,7 +262,7 @@ function describe(root: string, reason: RootReason, from: string): string {
     case 'cwd':
       return `用${where}注册`;
     case 'none':
-      return '没找到像设计目录的地方，需要用户指定';
+      return '没找到像设计目录的地方';
     default:
       // 新增 RootReason 时忘了补文案也不能让 message 变成 undefined
       return `用 ${root} 注册`;
@@ -303,8 +303,8 @@ export function resolveDesignRoot(from: string, explicit?: string): DesignRootDe
       candidates,
       message:
         tied.length > 1
-          ? `有 ${tied.length} 个同样像设计目录的候选（${tied.map((c) => c.name).join('、')}），需要用户指定其中一个`
-          : '没有设计稿，也没有 design/ui 这类目录：需要用户指定位置，或先问用户要不要新建一个设计目录',
+          ? `有 ${tied.length} 个同样像设计目录的候选（${tied.map((c) => c.name).join('、')}）`
+          : '没有设计稿，也没有 design/ui 这类目录',
     };
   }
 
@@ -348,7 +348,6 @@ export function guardProjectRoot(dir: string): RootGuard {
     error: `当前 watch 目录像项目根：${abs} 有 ${names}，本层没有设计稿。`,
     hint:
       '不建议把设计稿建在项目根：换到仓库里的设计目录（如 design/），或让 paintress 自己挑（paintress_viewer 不传 dir，' +
-      `或在本目录写 ${CONFIG_FILE}：{"root": "design"}）。仓库里还没有设计目录时，先问用户愿不愿意新建一个；` +
-      '确实要注册这里，加 --force（工具调用传 force: true）。',
+      `或在本目录写 ${CONFIG_FILE}：{"root": "design"}）。确实要注册这里，加 --force（工具调用传 force: true）。`,
   };
 }

@@ -2,11 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CONFIG_FILE, guardProjectRoot, projectRootMarkers, resolveDesignRoot } from '../src/web/design-root.js';
+import { CONFIG_FILE, PROJECT_ROOT_MARKERS, guardProjectRoot, projectRootMarkers, resolveDesignRoot } from '../src/web/design-root.js';
 import { COMPONENTS_FILE, PRESET_FILE } from '../src/doc/project.js';
 import { startDaemon, type DaemonHandle } from '../src/web/daemon.js';
 import { sendRequest } from '../src/web/client.js';
-import { autoRegister, closeViewerHandles } from '../src/web/autoregister.js';
+import { DesignRootUnresolvedError, autoRegister, closeViewerHandles } from '../src/web/autoregister.js';
 import { TOOLS } from '../src/mcp/tools.js';
 
 /**
@@ -153,11 +153,17 @@ describe('resolveDesignRoot', () => {
     expect(decision.root).toBe(dir);
   });
 
-  it('空目录：既不猜也不报错，只说明没有把握并要求先问用户', () => {
+  it('空目录：解析只陈述事实，要求用户先决定放哪儿的是 agent 通道的报错', () => {
     const dir = tmp('empty');
     const decision = resolveDesignRoot(dir);
     expect(decision.confident).toBe(false);
-    expect(decision.message).toContain('问用户');
+    expect(decision.message).toContain('没有设计稿');
+    // 解析结果不自带行动指令：问用户 / 别自己建，只在抛给调用方的错误里
+    expect(decision.message).not.toContain('问用户');
+    const error = new DesignRootUnresolvedError(decision);
+    expect(error.message).toContain('先问用户');
+    expect(error.message).toContain('design/');
+    expect(error.message).toContain('不要自己建目录');
   });
 });
 
@@ -189,6 +195,8 @@ describe('guardProjectRoot', () => {
   it('.git 算项目根标志', () => {
     const repo = tmp('guard-dotgit');
     mkdirSync(join(repo, '.git'));
+    // 标志清单是对外契约：这两项必须在内
+    expect(PROJECT_ROOT_MARKERS.map((m) => m.file)).toEqual(expect.arrayContaining(['.git', 'package.json']));
     expect(guardProjectRoot(repo).ok).toBe(false);
   });
 });
