@@ -251,4 +251,4 @@
 - 产物名固定（`hash: false`）→ `dist/index.d.ts`，`exports` 同时给 `types` 与 `import`；`verify:pkg` 增加「声明文件存在 + 相对引用可解析 + 体积上限」三项。
 - 体积：`index.d.ts` 1548 KB → **110 KB**（gzip 13 KB）；整包 tarball 从 164 KB 级上升到 ~330 KB，仍远小于注解前的 1.67 MB。
 - 质量基线：`pnpm check` 0 错误、**34 文件 440 用例全绿**、`pnpm build` + `verify:pkg` 通过；另用一个独立 TS 消费方工程编译验证 `PenDocument` / `PenNode` / `FrameSchema.shape` 等公共面可用。
-- 证据：`.agents/implementations/2026-11-15_1548_dts-debt.md`；决策 `ARCHITECTURE.md#D-013`。
+- 证据：`.agents/implementations/2026-11-15_1539_dts-debt.md`；决策 `ARCHITECTURE.md#D-013`。

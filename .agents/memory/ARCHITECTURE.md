@@ -166,5 +166,5 @@
   3. 组合块（`GraphicsBlock` / `StrokeBlock`）按 `typeof Fills` 之类的引用标注，避免同一个 union 在声明里被内联多份；
   4. `hash: false` 让产物名固定（`dist/index.d.ts`），`exports` 同时给 `types` 与 `import`。
 - **后果**：`index.d.ts` 约 105 KB（gzip 13 KB）；**新增/改动导出 schema 必须带输出类型标注**，否则 `pnpm build`（走 tsc 的声明生成）报 TS7056 —— `pnpm check` 是 `noEmit`，抓不到这条；`UnknownNode.type: string` 使 `node.type === 'text'` 的收窄仍保留 UnknownNode 分支（与旧推断行为一致，消费方需断言）。
-- **证据**：`src/schema/typed.ts`、`tsdown.config.ts`、`scripts/verify-package.mjs`；`.agents/implementations/2026-11-15_1548_dts-debt.md`。
+- **证据**：`src/schema/typed.ts`、`tsdown.config.ts`、`scripts/verify-package.mjs`；`.agents/implementations/2026-11-15_1539_dts-debt.md`。
 - **日期**：2026-11-15
