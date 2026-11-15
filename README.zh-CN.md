@@ -39,6 +39,8 @@ paintress 是一个给 AI agent 用的界面设计工具。你在对话里说要
 | `__preset.ptr` | 设计 token（颜色、倒角、间距、字号、字体族）、preset 组与字体注册表 |
 | `__components.ptr` | 可复用组件（标了 `reusable` 的节点） |
 
+这个根是**解析出来**的、不是猜的：仓库根的 `paintress.json` 可以声明（`{"root": "design"}`）；否则 paintress 会挑 `design/`、`ui/`、`mockups/` 这类目录，或者设计稿本来就在的当前目录。带着 `AGENTS.md`、`package.json` 或 `.git` 却没有任何设计稿的目录会被拒绝当根——那是代码仓库，注册进去只会在根上落下 `__preset.ptr`。确实要用该目录时加 `--force`（工具调用传 `force: true`）。
+
 ## 环境要求
 
 Node.js 22 及以上。

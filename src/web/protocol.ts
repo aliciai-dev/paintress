@@ -6,7 +6,7 @@ import type { AccessInfo } from './bind.js';
 export type ClientRequest =
   | { kind: 'ping' }
   | { kind: 'status' }
-  | { kind: 'watch'; project: string; dir: string; depth?: number; owner?: 'agent' | 'manual' }
+  | { kind: 'watch'; project: string; dir: string; depth?: number; owner?: 'agent' | 'manual'; scaffold?: boolean; force?: boolean }
   | { kind: 'unwatch'; project: string }
   | { kind: 'attach'; project: string }
   | { kind: 'detach'; project: string }
@@ -44,7 +44,7 @@ export type ServerResponse =
   | { ok: true; recorded: number }
   | { ok: true; reports: { path: string; checked: string[]; missing: string[] }[] }
   | { ok: true; shutdown: true }
-  | { ok: false; error: string };
+  | { ok: false; error: string; hint?: string; markers?: string[] };
 
 export function encodeLine(msg: ClientRequest | ServerResponse): string {
   return `${JSON.stringify(msg)}\n`;

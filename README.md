@@ -39,6 +39,8 @@ Two project-level files keep a project consistent. They live at the **registered
 | `__preset.ptr` | design tokens (colors, radii, spacing, font sizes, font families), preset groups and the font registry |
 | `__components.ptr` | reusable components (nodes marked `reusable`) |
 
+Which directory that root is gets resolved, not guessed: `paintress.json` at the repo root can declare it (`{"root": "design"}`); otherwise paintress picks a `design/` `ui/` `mockups/` style directory, or the current directory when designs already live there. A directory that carries `AGENTS.md`, `package.json` or `.git` but holds no designs is refused as a root — that is a code repository, and registering it drops `__preset.ptr` into it. Pass `--force` (`force: true` on the tool) when you really mean that directory.
+
 ## Requirements
 
 Node.js 22 or newer.

@@ -83,7 +83,7 @@ Two project-level files keep a design consistent. Both are created automatically
 
 ## Working rules
 
-1. **Viewer first.** Run `paintress web` before the first write — see above. It is idempotent, so there is no reason to skip it.
+1. **Viewer first — on the design root, never on a repo root.** Run `paintress web` before the first write; it is idempotent, so there is no reason to skip it. Then call `paintress_viewer` **without `dir`**: paintress registers the design root itself (`paintress.json`'s `root`, else a `design/` `ui/` `mockups/` style directory, else the cwd only when designs already live there). Do not walk the cwd tree looking for a folder to register, and do not pass a directory that has `AGENTS.md`, `package.json` or `.git` but no designs — the viewer refuses it and asks for `force: true` (`--force` on the CLI). If the reply is `ok: false` with `candidates`, pick one and pass it as `dir`; do not retry with `force`.
 2. **Nothing to edit? Create it.** `paintress_new` is the only way to make a file; there is no "empty document" state to work around, and no need to hand-write JSON.
 3. **Query before you edit.** Node ids come from the file; never invent them.
 4. **`#N` means a marker.** When the user writes `#1`, call `paintress_marks`: it returns `#N -> { project, file, nodeId }`, so you can act on exactly one node in one file (`paintress_update` with that `path` and `id`). Markers are per viewer session and vanish when the viewer exits.

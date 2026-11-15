@@ -43,7 +43,7 @@ import { query as q, get as g, update as u, insert as i, remove as rm, move as m
 import { expandRefs, renderDocument } from '../render/index.js';
 import { screenshotPen, findBrowser } from '../shot/screenshot.js';
 import { isDaemonRunning, sendRequest } from '../web/client.js';
-import { ensureViewer } from '../web/autoregister.js';
+import { ensureViewer, DesignRootUnresolvedError } from '../web/autoregister.js';
 import type { PenDocument } from '../schema/index.js';
 
 /**
@@ -339,21 +339,46 @@ function remapIds(node: unknown, taken: Set<string>): void {
 export const TOOLS: Record<string, ToolDef> = {
   paintress_viewer: {
     description:
-      'Ensure the local viewer is running and register the current project. Idempotent: reuse the running process (returns its pid/port, never starts a second one). Call it before drawing, editing or showing a design, without waiting to be asked.',
+      'Ensure the local viewer is running and register the project that holds the design. Idempotent: reuse the running process (returns its pid/port, never starts a second one). Call it before drawing, editing or showing a design, without waiting to be asked. Without `dir` it registers the design root (declared in paintress.json, else a design/ ui/ mockups/ style directory, else the cwd when designs live there) — never a code repository root on a guess.',
     inputSchema: {
-      dir: z.string().optional().describe('Directory to register; defaults to the current working directory'),
+      dir: z.string().optional().describe('Directory to register. Omit it to let paintress pick the design root; pass it only for a non-standard layout'),
       project: z.string().optional().describe('Project name (the URL segment); defaults to parent/dir'),
       depth: z.number().int().min(1).max(6).optional().describe('Max depth when listing designs; default 3'),
+      force: z
+        .boolean()
+        .optional()
+        .describe('Register even when the directory looks like a project root (AGENTS.md / package.json / .git) and holds no designs'),
     },
     run: async (a) => {
       const dir = optStr(a, 'dir');
       const project = optStr(a, 'project');
       const depth = optNum(a, 'depth');
-      const info = await ensureViewer({
-        ...(dir !== undefined ? { dir } : {}),
-        ...(project !== undefined ? { project } : {}),
-        ...(depth !== undefined ? { depth } : {}),
-      });
+      let info;
+      try {
+        info = await ensureViewer({
+          ...(dir !== undefined ? { dir } : {}),
+          ...(project !== undefined ? { project } : {}),
+          ...(depth !== undefined ? { depth } : {}),
+          ...(a['force'] === true ? { force: true } : {}),
+        });
+      } catch (cause) {
+        // 设计根没把握：不猜、不注册，把候选目录交回去让调用方决定
+        if (cause instanceof DesignRootUnresolvedError) {
+          return {
+            ok: false,
+            error: cause.message,
+            designRoot: {
+              root: cause.decision.root,
+              reason: cause.decision.reason,
+              confident: false,
+              candidates: cause.decision.candidates
+                .filter((c) => c.score > 0)
+                .map((c) => ({ name: c.name, dir: c.dir, score: c.score, notes: c.notes })),
+            },
+          };
+        }
+        throw cause;
+      }
       // 项目根与两个关键文件：agent 不需要自己找、更不该自己另建
       const designSystem = projectFilesInfo(info.root, { ensure: true });
       // 端口/绑定若与默认不同，必须明说：agent 会把人引到这个 url 上
@@ -371,6 +396,13 @@ export const TOOLS: Record<string, ToolDef> = {
         pid: info.pid,
         port: info.port,
         access: info.access,
+        // 注册的是哪个目录、凭什么选的：agent 下一步的路径都该相对它
+        designRoot: {
+          root: info.designRoot.root,
+          reason: info.designRoot.reason,
+          confident: info.designRoot.confident,
+          message: info.designRoot.message,
+        },
         ...(note !== undefined ? { note } : {}),
         started: info.startedDaemon,
         designSystem,

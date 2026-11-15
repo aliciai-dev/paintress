@@ -9,6 +9,7 @@ import { startDaemon, type DaemonHandle } from './web/daemon.js';
 import { isDaemonRunning, sendRequest, attachPersistent, queryDaemon } from './web/client.js';
 import { findProjectRoot, projectFilesInfo, setProjectRoots } from './doc/project.js';
 import { ensureDaemon, reuseDaemon } from './web/spawn.js';
+import { resolveDesignRoot } from './web/design-root.js';
 import { diagnoseNetwork, type AccessInfo } from './web/bind.js';
 import {
   CLIENTS,
@@ -189,6 +190,38 @@ function cwdDesignSystem(): ReturnType<typeof projectFilesInfo> | null {
   }
 }
 
+/**
+ * `paintress web` 开在什么目录：按设计根规则解析一次并告诉人。
+ * 目的：在仓库根敲 `paintress web` 时，别再让人以为「项目＝仓库根」。
+ */
+function cwdDesignRootInfo(): { designRoot: Record<string, unknown>; hint?: string } {
+  const cwd = process.cwd();
+  const decision = resolveDesignRoot(cwd);
+  const designRoot = {
+    root: decision.root,
+    reason: decision.reason,
+    confident: decision.confident,
+    candidates: decision.candidates
+      .filter((c) => c.score > 0)
+      .map((c) => ({ name: c.name, dir: c.dir, score: c.score, notes: c.notes })),
+  };
+  if (decision.confident && resolve(decision.root) !== resolve(cwd)) {
+    return {
+      designRoot,
+      hint:
+        `${decision.message}。注册设计目录：paintress watch <name> ${decision.root}，` +
+        '或让 agent 调 paintress_viewer（不传 dir 时自动选）。',
+    };
+  }
+  if (!decision.confident) {
+    return {
+      designRoot,
+      hint: `${decision.message}。建议先建一个设计目录（如 design/），或在项目根写 ${'paintress.json'}：{"root": "design"}。`,
+    };
+  }
+  return { designRoot };
+}
+
 /** CLI 进程也要用「注册根」解析项目文件：从 daemon 拉一次项目表即可 */
 async function syncProjectRoots(): Promise<void> {
   if (!isDaemonRunning()) return;
@@ -243,12 +276,16 @@ export async function main(argv: string[]): Promise<number> {
     if (cmd === 'watch') {
       if (!file || !a1) throw new Error('用法：paintress watch <name> <dir> [--depth 1..6]');
       const depth = flagNum(flags, 'depth');
+      const force = flags['force'] === true;
       // 目录要按“调用者的 cwd”解析成绝对路径：daemon 是常驻进程，
       // 它的 cwd 和人在哪个目录敲命令无关
       const dir = resolve(a1);
       console.log(
         JSON.stringify(
-          await sendRequest({ kind: 'watch', project: file, dir, ...(depth !== undefined ? { depth } : {}) }, 8000),
+          await sendRequest(
+            { kind: 'watch', project: file, dir, force, ...(depth !== undefined ? { depth } : {}) },
+            8000,
+          ),
           null,
           2,
         ),
@@ -376,6 +413,7 @@ export async function main(argv: string[]): Promise<number> {
               http: httpOf(running.access),
               access: running.access,
               designSystem: cwdDesignSystem(),
+              ...cwdDesignRootInfo(),
             },
             null,
             2,
@@ -404,6 +442,7 @@ export async function main(argv: string[]): Promise<number> {
               http: httpOf(res.access),
               access: res.access,
               designSystem: cwdDesignSystem(),
+              ...cwdDesignRootInfo(),
             },
             null,
             2,

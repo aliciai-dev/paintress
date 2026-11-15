@@ -3,6 +3,7 @@ import { setProjectRoots } from '../doc/project.js';
 import { attachPersistent, queryDaemon, sendRequest, type AttachHandle } from './client.js';
 import { ensureDaemon } from './spawn.js';
 import { deriveProjectName, sanitizeProjectName } from './paths.js';
+import { resolveDesignRoot, type DesignRootDecision } from './design-root.js';
 import { openBrowser, projectUrl } from './open-browser.js';
 import type { AccessInfo } from './bind.js';
 
@@ -36,15 +37,37 @@ export interface ViewerInfo {
   access: AccessInfo;
   /** 本次调用是否真的拉起了 daemon */
   startedDaemon: boolean;
+  /** 设计根是怎么选出来的（人/agent 需要知道到底注册了哪个目录） */
+  designRoot: DesignRootDecision;
+}
+
+/** 设计根没把握：不猜、不注册，把候选交回去让调用方指定 */
+export class DesignRootUnresolvedError extends Error {
+  readonly decision: DesignRootDecision;
+
+  constructor(decision: DesignRootDecision) {
+    const names = decision.candidates.filter((c) => c.score > 0).map((c) => (c.name === '.' ? c.dir : c.name));
+    super(
+      `${decision.message}\n` +
+        (names.length > 0 ? `像设计目录的候选：${names.join('、')}\n` : '') +
+        '把设计稿放进 design/ 这类目录，或显式传 dir；实在要在当前目录注册，传 force: true（CLI 用 --force）。',
+    );
+    this.name = 'DesignRootUnresolvedError';
+    this.decision = decision;
+  }
 }
 
 export interface EnsureViewerOptions {
-  /** 要注册的目录，默认当前工作目录；相对路径按本进程 cwd 解析（daemon 的 cwd 不可信） */
+  /** 要注册的目录；给了就完全照办（不猜）。相对路径按本进程 cwd 解析（daemon 的 cwd 不可信） */
   dir?: string;
   /** 项目名，默认由目录推导（父目录/自身） */
   project?: string;
   /** 列举设计稿的最大深度（1..6，默认 3） */
   depth?: number;
+  /** 绕过「项目根不许当设计根」的硬门槛（人明确要求时用） */
+  force?: boolean;
+  /** 没有项目文件时是否创建；默认「显式指定目录才建」，自动注册一律不建 */
+  scaffold?: boolean;
 }
 
 /**
@@ -88,8 +111,14 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   if (autoWebDisabled()) {
     throw new Error('PAINTRESS_NO_AUTO_WEB=1：已关闭自动查看器，需要手动运行 paintress web');
   }
-  const dir = resolve(opts.dir ?? process.cwd());
+  // 先定「设计稿的家」：显式目录照办，否则按 paintress.json / 目录名 / 设计稿分布来解析。
+  // 解析不出把握就不注册 —— 宁可不画，也不要在用户的仓库根上留两份空项目文件。
+  const decision = resolveDesignRoot(process.cwd(), opts.dir);
+  if (!decision.confident) throw new DesignRootUnresolvedError(decision);
+  const dir = decision.root;
   const project = opts.project !== undefined ? sanitizeProjectName(opts.project) : deriveProjectName(dir);
+  // 自动注册（没给 dir）绝不 scaffold：cwd 未必是设计根。显式指定时才按老行为建项目文件。
+  const scaffold = opts.scaffold ?? opts.dir !== undefined;
 
   const running = await queryDaemon();
   const attached = handles.get(project);
@@ -104,16 +133,25 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
       url: projectUrl({ port: running.port, host: running.access.host }, project),
       access: running.access,
       startedDaemon: false,
+      designRoot: decision,
     };
   }
 
   // 子进程不自弹窗口：由下面用「项目深链」弹一次，避免落到项目列表、也避免开两个标签页
   const { started, pid, port, access } = await ensureDaemon({ noOpen: true });
   const watched = await sendRequest(
-    { kind: 'watch', project, dir, owner: 'agent', ...(opts.depth !== undefined ? { depth: opts.depth } : {}) },
+    {
+      kind: 'watch',
+      project,
+      dir,
+      owner: 'agent',
+      scaffold,
+      ...(opts.force === true ? { force: true } : {}),
+      ...(opts.depth !== undefined ? { depth: opts.depth } : {}),
+    },
     8000,
   );
-  if (!watched.ok) throw new Error(watched.error);
+  if (!watched.ok) throw new Error(`${watched.error}${watched.hint !== undefined ? `\n${watched.hint}` : ''}`);
 
   // 同项目重复注册：旧连接（daemon 重启后必然已死）先放掉，避免 daemon 误判 agent 数量
   attached?.close();
@@ -124,17 +162,22 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   // 只在「本次拉起 daemon」时开一次窗口，并直接落在自己的项目上
   const url = projectUrl({ port, host: access.host }, project);
   if (started) openBrowser(url);
-  return { project, root: dir, pid, port, url, access, startedDaemon: started };
+  return { project, root: dir, pid, port, url, access, startedDaemon: started, designRoot: decision };
 }
 
 /**
  * MCP server 启动时自动注册自身（best-effort，失败不阻断 MCP）。
  * 与 ensureViewer 同一条路径 —— 启动时注册和「开始画之前补一次」是同一件事。
+ * **自动注册不 scaffold、不 force**：cwd 不是设计根时，只是安静地不注册。
  */
 export async function autoRegister(cwd: string = process.cwd()): Promise<ViewerInfo | null> {
   if (autoWebDisabled()) return null;
   try {
-    return await ensureViewer({ dir: cwd });
+    const info = await ensureViewer({ dir: undefined, scaffold: false });
+    if (resolve(info.root) !== resolve(cwd)) {
+      process.stderr.write(`paintress: 按设计根注册 ${info.project}（${info.root}）—— ${info.designRoot.message}\n`);
+    }
+    return info;
   } catch (cause) {
     process.stderr.write(
       `paintress: web 自动注册失败（${cause instanceof Error ? cause.message : String(cause)}），MCP 工具不受影响\n`,

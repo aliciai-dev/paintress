@@ -14,6 +14,7 @@ import { MarksStore } from './marks.js';
 import { ChangesStore } from './changes.js';
 import { LineDecoder, encodeLine, type ClientRequest, type ServerResponse } from './protocol.js';
 import { lockPath, pidPath, safeJoin, socketPath } from './paths.js';
+import { guardProjectRoot } from './design-root.js';
 import { WatchManager } from './watcher.js';
 import { VersionChecker } from './update-check.js';
 import { loadDoc, renderDocument } from '../index.js';
@@ -472,19 +473,37 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               reply({ ok: true, reports: fontReports.list(req.project) });
               break;
             case 'watch': {
+              // 硬门槛：项目根（AGENTS.md / package.json / .git …）且本层没有设计稿 → 拒绝注册。
+              // 在这里拦，是因为所有入口（cli watch、MCP paintress_viewer、agent 自动注册）都汇到这一处。
+              if (req.force !== true) {
+                const guard = guardProjectRoot(req.dir);
+                if (!guard.ok) {
+                  const refusal: { ok: false; error: string; hint?: string; markers?: string[] } = {
+                    ok: false,
+                    error: guard.error ?? '拒绝把项目根注册为设计根',
+                    markers: guard.markers.map((m) => m.file),
+                  };
+                  if (guard.hint !== undefined) refusal.hint = guard.hint;
+                  reply(refusal);
+                  break;
+                }
+              }
               everHadProjects = true;
               const entry = registry.watch(req.project, req.dir, req.depth, req.owner === 'agent' ? { owner: 'agent' } : {});
               // 人显式 watch 的项目撤回待执行的自动退场
               cancelAutoDetach(entry.name);
               watchers.watchDesigns(entry.rootReal, entry.depth, scheduleRegistryNotify);
               // 项目级预设 / 组件库：不存在就建（已存在一个字都不动）。失败不影响注册。
-              try {
-                const created = ensureProjectScaffold(entry.rootReal).created;
-                if (created.length > 0 && !opts.quiet) {
-                  process.stderr.write(`paintress web: 项目 ${entry.name} 初始化 ${created.map((f) => relative(entry.rootReal, f)).join('、')}\n`);
+              // 自动注册（scaffold: false）不建：agent 的 cwd 未必是设计根，随手建就是仓库根上的脏文件。
+              if (req.scaffold !== false) {
+                try {
+                  const created = ensureProjectScaffold(entry.rootReal).created;
+                  if (created.length > 0 && !opts.quiet) {
+                    process.stderr.write(`paintress web: 项目 ${entry.name} 初始化 ${created.map((f) => relative(entry.rootReal, f)).join('、')}\n`);
+                  }
+                } catch (cause) {
+                  process.stderr.write(`paintress web: 项目脚手架创建失败（${cause instanceof Error ? cause.message : String(cause)}）\n`);
                 }
-              } catch (cause) {
-                process.stderr.write(`paintress web: 项目脚手架创建失败（${cause instanceof Error ? cause.message : String(cause)}）\n`);
               }
               syncProjectRoots();
               reply({ ok: true, watched: true, project: registry.info(entry) });
