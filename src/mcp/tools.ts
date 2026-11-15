@@ -339,7 +339,7 @@ function remapIds(node: unknown, taken: Set<string>): void {
 export const TOOLS: Record<string, ToolDef> = {
   paintress_viewer: {
     description:
-      'Ensure the local viewer is running and register the project that holds the design. Idempotent: reuse the running process (returns its pid/port, never starts a second one). Call it before drawing, editing or showing a design, without waiting to be asked. Without `dir` it registers the design root (declared in paintress.json, else a design/ ui/ mockups/ style directory, else the cwd when designs live there) — never a code repository root on a guess.',
+      'Ensure the local viewer is running and register the project that holds the design. Idempotent: reuse the running process (returns its pid/port, never starts a second one). Call it before drawing, editing or showing a design, without waiting to be asked. Without `dir` it registers the design root (declared in paintress.json, else a design/ ui/ mockups/ style directory, else the cwd when designs live there) — never a code repository root on a guess. When no design root exists yet it returns ok:false with candidates and a `next` instruction: ask the user where designs should live and create it only with their agreement.',
     inputSchema: {
       dir: z.string().optional().describe('Directory to register. Omit it to let paintress pick the design root; pass it only for a non-standard layout'),
       project: z.string().optional().describe('Project name (the URL segment); defaults to parent/dir'),
@@ -367,6 +367,10 @@ export const TOOLS: Record<string, ToolDef> = {
           return {
             ok: false,
             error: cause.message,
+            // 给 agent 的下一步：没有设计目录时先问用户，不要自己建、也不要直接 force
+            next:
+              'Ask the user where design files should live (offer a new `design/` directory inside the project) and create it only after they agree; ' +
+              'then call this tool again with that directory as `dir`. Do not create a directory on your own, and do not fall back to `force`.',
             designRoot: {
               root: cause.decision.root,
               reason: cause.decision.reason,

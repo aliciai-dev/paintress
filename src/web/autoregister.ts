@@ -50,7 +50,8 @@ export class DesignRootUnresolvedError extends Error {
     super(
       `${decision.message}\n` +
         (names.length > 0 ? `像设计目录的候选：${names.join('、')}\n` : '') +
-        '把设计稿放进 design/ 这类目录，或显式传 dir；实在要在当前目录注册，传 force: true（CLI 用 --force）。',
+        '用户还没指定设计目录时：**先问用户**设计稿放哪儿（可以建议在项目根新建 design/），' +
+        '得到同意后再建目录、再把该目录作为 dir 传进来。不要自己建目录，也不要直接改用 force。',
     );
     this.name = 'DesignRootUnresolvedError';
     this.decision = decision;

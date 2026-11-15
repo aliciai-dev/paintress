@@ -153,11 +153,11 @@ describe('resolveDesignRoot', () => {
     expect(decision.root).toBe(dir);
   });
 
-  it('空目录：既不猜也不报错，只说明没有把握', () => {
+  it('空目录：既不猜也不报错，只说明没有把握并要求先问用户', () => {
     const dir = tmp('empty');
     const decision = resolveDesignRoot(dir);
     expect(decision.confident).toBe(false);
-    expect(decision.message).toContain('需要显式指定');
+    expect(decision.message).toContain('问用户');
   });
 });
 
@@ -260,6 +260,25 @@ describe('daemon 注册门槛（回归：仓库根不再长项目文件）', () 
     expect(info?.designRoot.reason).toBe('child');
     expect(existsSync(join(repo, PRESET_FILE))).toBe(false);
     expect(existsSync(join(repo, COMPONENTS_FILE))).toBe(false);
+  });
+
+  it('paintress_viewer 没找到设计根时，回 next 引导先问用户再建目录', async () => {
+    const dir = tmp('ask-user');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      const out = (await TOOLS['paintress_viewer']!.run({})) as Record<string, unknown>;
+      expect(out['ok']).toBe(false);
+      const next = String(out['next'] ?? '');
+      expect(next).toContain('Ask the user');
+      expect(next).toContain('design/');
+      expect(next.toLowerCase()).toContain('do not create a directory');
+      // 不允许的业务动作必须在提示里明确排除
+      expect(next.toLowerCase()).toContain('force');
+      expect(existsSync(join(dir, 'design'))).toBe(false);
+      expect(existsSync(join(dir, PRESET_FILE))).toBe(false);
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it('paintress_viewer 的 force: true 能注册没有可信候选的当前目录（与错误提示一致）', async () => {
