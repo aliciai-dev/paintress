@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -247,4 +247,163 @@ describe('MCP 写工具回传变更', () => {
     const body = await readChanges('design.pen');
     expect(body.ids).toContain('title');
   }, 15_000);
+});
+
+/**
+ * 预设类写操作（establish / adjust / preset set）以前只写 `__preset.ptr`，
+ * 或者绕过 write() 直接 saveDoc，于是「改了一堆节点却没亮金边」。
+ */
+describe('预设类写操作也会点亮受影响的节点', () => {
+  let albumDir: string;
+  let designPath: string;
+
+  const readAlbumChanges = async (file: string): Promise<{ ids: string[]; at: number }> => {
+    const http = await fetch(`${baseUrl}/api/changes?project=album&path=${encodeURIComponent(file)}`);
+    return (await http.json()) as { ids: string[]; at: number };
+  };
+
+  beforeAll(async () => {
+    albumDir = mkdtempSync(join(tmpdir(), 'paintress-changes-album-'));
+    await sendRequest({ kind: 'watch', project: 'album', dir: albumDir });
+    designPath = join(albumDir, 'screen.ptr');
+    writeFileSync(
+      designPath,
+      JSON.stringify({
+        version: '2.22',
+        fileToken: '00000000-0000-4000-8000-0000000000ab',
+        variables: {},
+        'x-paintress': { spec: '1' },
+        children: [
+          {
+            type: 'frame',
+            id: 'board',
+            width: 300,
+            height: 200,
+            children: [
+              // a、b 同色同圆角：既进 token 候选，也能靠 preset 组改写
+              { type: 'rectangle', id: 'a', width: 60, height: 40, fill: '#3B82F6', cornerRadius: 8 },
+              { type: 'rectangle', id: 'b', width: 60, height: 40, fill: '#3B82F6', cornerRadius: 8 },
+              // c 只共享颜色，不共享圆角 → 走 $token 引用
+              { type: 'rectangle', id: 'c', width: 60, height: 40, fill: '#3B82F6', cornerRadius: 12 },
+            ],
+          },
+        ],
+      }),
+      'utf8',
+    );
+  });
+
+  afterAll(() => rmSync(albumDir, { recursive: true, force: true }));
+
+  it('establish apply 把被改写的节点记成变更', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    const before = sentNotifications.changes.length;
+    const res = (await TOOLS['paintress_establish']!.run({ path: designPath, apply: true })) as {
+      applied: boolean;
+      touched: string[];
+      written: { nodes: number };
+    };
+
+    expect(res.applied).toBe(true);
+    expect(res.written.nodes).toBe(3);
+    expect(res.touched.sort()).toEqual(['a', 'b', 'c']);
+    expect(sentNotifications.changes.length).toBe(before + 1);
+    await sentNotifications.changes[before];
+
+    await until(async () => {
+      const body = await readAlbumChanges('screen.ptr');
+      return body.ids.length === 3 ? body : null;
+    }, 15_000);
+    expect((await readAlbumChanges('screen.ptr')).ids.sort()).toEqual(['a', 'b', 'c']);
+  }, 20_000);
+
+  it('adjust 改 token：经 preset 组间接受影响的节点也算在变更里', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    const listed = (await TOOLS['paintress_preset']!.run({ path: designPath, action: 'list' })) as {
+      items: { key: string; type: string }[];
+    };
+    const token = listed.items.find((item) => item.type === 'color');
+    expect(token).toBeDefined();
+
+    const before = sentNotifications.changes.length;
+    const res = (await TOOLS['paintress_adjust']!.run({
+      path: designPath,
+      key: token!.key,
+      value: '#123456',
+      apply: true,
+    })) as { applied: boolean; touched: string[] };
+
+    expect(res.applied).toBe(true);
+    // c 直接写着 $token；a、b 靠 preset 组引用同一个 token
+    expect(res.touched.sort()).toEqual(['a', 'b', 'c']);
+    expect(sentNotifications.changes.length).toBe(before + 1);
+    await sentNotifications.changes[before];
+
+    await until(async () => {
+      const body = await readAlbumChanges('screen.ptr');
+      return body.ids.length === 3 ? body : null;
+    }, 15_000);
+    expect((await readAlbumChanges('screen.ptr')).ids.sort()).toEqual(['a', 'b', 'c']);
+  }, 20_000);
+
+  it('adjust 改组属性：亮的是用了这一组的节点', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    const listed = (await TOOLS['paintress_preset']!.run({ path: designPath, action: 'list' })) as {
+      groups: Record<string, { props: Record<string, string> }>;
+    };
+    const groupName = Object.keys(listed.groups)[0];
+    expect(groupName).toBeDefined();
+
+    const before = sentNotifications.changes.length;
+    const res = (await TOOLS['paintress_adjust']!.run({
+      path: designPath,
+      group: groupName!,
+      prop: 'fill',
+      value: '#222222',
+      apply: true,
+    })) as { applied: boolean; touched: string[] };
+
+    expect(res.applied).toBe(true);
+    expect(res.touched.sort()).toEqual(['a', 'b']);
+    await sentNotifications.changes[before];
+  }, 20_000);
+
+  it('preset set 传项目目录：项目里每个设计稿里引用该 token 的节点都记录', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    // 另外两张设计稿直接引用同一个 token，验证「传目录」时会被逐张扫到
+    const makeDesign = (file: string, id: string, token: string, seed: string): void => {
+      writeFileSync(
+        join(albumDir, file),
+        JSON.stringify({
+          version: '2.22',
+          fileToken: `00000000-0000-4000-8000-0000000000${seed}`,
+          variables: {},
+          'x-paintress': { spec: '1' },
+          children: [{ type: 'rectangle', id, width: 10, height: 10, fill: `$${token}` }],
+        }),
+        'utf8',
+      );
+    };
+    makeDesign('other.ptr', 'd', 'color-brand', 'ac');
+    makeDesign('third.ptr', 'e', 'color-brand', 'ad');
+
+    const before = sentNotifications.changes.length;
+    await TOOLS['paintress_preset']!.run({
+      path: albumDir,
+      action: 'set',
+      key: 'color-brand',
+      type: 'color',
+      value: '#445566',
+    });
+    // 两张引用它的设计稿各一条通知；__preset.ptr / __components.ptr 不是设计稿，不该被通知
+    expect(sentNotifications.changes.length).toBe(before + 2);
+    await Promise.all(sentNotifications.changes.slice(before));
+
+    await until(async () => {
+      const body = await readAlbumChanges('other.ptr');
+      return body.ids.includes('d') ? body : null;
+    }, 15_000);
+    expect((await readAlbumChanges('third.ptr')).ids).toContain('e');
+    expect((await readAlbumChanges('__preset.ptr')).ids).toEqual([]);
+  }, 20_000);
 });

@@ -176,6 +176,8 @@ export interface EstablishResult {
   tokens: CandidateToken[];
   groups: CandidateGroup[];
   written: { tokens: string[]; groups: string[]; nodes: number };
+  /** 被改写成引用的节点 id：调用方据此让查看器把这些节点标出来 */
+  touched: string[];
 }
 
 /**
@@ -231,6 +233,7 @@ export function applyEstablish(
   for (const t of plan.tokens) tokenByValue.set(`${t.type}:${t.value.toUpperCase()}`, t.key);
 
   let updated = 0;
+  const touchedIds = new Set<string>();
   const rewrite = (nodes: unknown[], inheritedAllowLiteral = false): void => {
     for (const raw of nodes) {
       if (!isRecord(raw)) continue;
@@ -245,6 +248,7 @@ export function applyEstablish(
       if (group !== undefined && node['preset'] === undefined) {
         for (const prop of Object.keys(group.props)) delete node[prop];
         node['preset'] = group.name;
+        if (id !== '') touchedIds.add(id);
         updated += 1;
       } else {
         // 没有命中组：只改写 planEstablish 声明过的样式属性。
@@ -268,7 +272,10 @@ export function applyEstablish(
             touched = true;
           }
         }
-        if (touched) updated += 1;
+        if (touched) {
+          if (id !== '') touchedIds.add(id);
+          updated += 1;
+        }
       }
       const kids = node['children'];
       if (Array.isArray(kids)) rewrite(kids);
@@ -277,10 +284,77 @@ export function applyEstablish(
   rewrite(loaded.doc.children);
   if (updated > 0) saveDoc(designPath, loaded.doc, { expectedMtimeMs: loaded.mtimeMs, flavor: loaded.flavor });
 
-  return { applied: true, tokens: plan.tokens, groups: plan.groups, written: { tokens: writtenTokens, groups: writtenGroups, nodes: updated } };
+  return {
+    applied: true,
+    tokens: plan.tokens,
+    groups: plan.groups,
+    written: { tokens: writtenTokens, groups: writtenGroups, nodes: updated },
+    touched: [...touchedIds],
+  };
 }
 
 // ---------------------------------------------------------------- adjust
+
+/** 遍历文档节点（含嵌套）；没 id 的节点给 `'?'`，调用方自己过滤 */
+function forEachNode(nodes: unknown[], visit: (node: Record<string, unknown>, id: string) => void): void {
+  for (const raw of nodes) {
+    if (!isRecord(raw)) continue;
+    const id = typeof raw['id'] === 'string' ? raw['id'] : '?';
+    visit(raw, id);
+    const kids = raw['children'];
+    if (Array.isArray(kids)) forEachNode(kids, visit);
+  }
+}
+
+/** 「退了一个 token」或「换了一个 preset 组」的描述：只需要知道改了谁，不需要新值 */
+export interface PresetBlast {
+  /** 改 / 删的 token key（不带 `$`） */
+  token?: string;
+  /** 改 / 删的 preset 组名 */
+  group?: string;
+}
+
+/**
+ * 预设变更会连带改变哪些节点：
+ * - token：直接写着 `$key` 的节点，外加引用 `$key` 的 preset 组装上的节点；
+ * - 组：写着 `preset:"<组名>"` 的节点。
+ *
+ * 只服务于「写完告诉查看器亮哪些节点」，**不参与渲染计算**：渲染侧的合并由 project.ts 负责。
+ */
+export function nodesAffectedByPreset(
+  doc: PenDocument,
+  presetDoc: PenDocument | null,
+  blast: PresetBlast,
+): string[] {
+  const groups: Record<string, PresetGroup> = { ...presetGroupsOf(presetDoc), ...presetGroupsOf(doc) };
+  const affectedGroups = new Set<string>();
+  if (blast.group !== undefined) affectedGroups.add(blast.group);
+  const ref = blast.token === undefined ? null : `$${blast.token}`;
+  if (ref !== null) {
+    for (const [name, group] of Object.entries(groups)) {
+      if (Object.values(group.props).includes(ref)) affectedGroups.add(name);
+    }
+  }
+  const referencesRef = (value: unknown): boolean => {
+    if (ref !== null && value === ref) return true;
+    if (Array.isArray(value)) return value.some(referencesRef);
+    if (isRecord(value)) return Object.values(value).some(referencesRef);
+    return false;
+  };
+  const out = new Set<string>();
+  forEachNode(doc.children, (node, id) => {
+    if (id === '?') return;
+    const preset = typeof node['preset'] === 'string' ? node['preset'] : undefined;
+    if (preset !== undefined && affectedGroups.has(preset)) {
+      out.add(id);
+      return;
+    }
+    if (ref !== null && Object.entries(node).some(([prop, value]) => prop !== 'children' && referencesRef(value))) {
+      out.add(id);
+    }
+  });
+  return [...out];
+}
 
 export interface AdjustChange {
   where: string;
@@ -397,17 +471,33 @@ export function planAdjust(
 
 export interface AdjustResult extends AdjustPlan {
   applied: boolean;
+  /** 落盘后渲染会变的节点 id：调用方据此让查看器把它们标出来 */
+  touched: string[];
 }
 
 /** 应用：只写 `__preset.ptr`；设计稿里的引用自动跟着变 */
-export function applyAdjust(designPath: string, presetDoc: PenDocument | null, plan: AdjustPlan): AdjustResult {
+export function applyAdjust(
+  designPath: string,
+  presetDoc: PenDocument | null,
+  plan: AdjustPlan,
+  /** `doc` 已经在手边时传进来，避免为了算受影响的节点再读一遍大稿 */
+  opts: { doc?: PenDocument } = {},
+): AdjustResult {
+  const designDoc = (): PenDocument => opts.doc ?? loadDoc(designPath).doc;
+  /** 计划里点名过的节点 + 经预设组间接受影响、计划只记了 `<preset:x>` 的节点 */
+  const touchedOf = (): string[] => {
+    const direct = plan.changes.map((c) => c.where).filter((where) => where !== '?' && !where.startsWith('<'));
+    const viaPreset =
+      plan.kind === 'token' ? nodesAffectedByPreset(designDoc(), presetDoc, { token: plan.target }) : [];
+    return [...new Set([...direct, ...viaPreset])];
+  };
   if (plan.kind === 'token') {
     const items = listPresets(designPath).items;
     const existing = items.find((p) => p.key === plan.target);
     if (existing === undefined) throw new Error(`token 不存在：${plan.target}`);
     const presetPath = `${findProjectRootStrict(designPath)}/${PRESET_FILE}`;
     setPreset(presetPath, { key: existing.key, type: existing.type, value: plan.value, name: existing.name });
-    return { ...plan, applied: true };
+    return { ...plan, applied: true, touched: touchedOf() };
   }
   const groups = presetGroupsOf(presetDoc);
   const group = groups[plan.target];
@@ -417,7 +507,7 @@ export function applyAdjust(designPath: string, presetDoc: PenDocument | null, p
   const nextProps = { ...group.props, [prop]: plan.value };
   const presetPath = `${findProjectRootStrict(designPath)}/${PRESET_FILE}`;
   setPresetGroup(presetPath, { name: plan.target, target: group.target, props: nextProps });
-  return { ...plan, applied: true };
+  return { ...plan, applied: true, touched: touchedOf() };
 }
 
 /** 读项目预设文档（没有就是 null） */

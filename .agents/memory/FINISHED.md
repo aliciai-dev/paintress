@@ -252,3 +252,11 @@
 - 体积：`index.d.ts` 1548 KB → **110 KB**（gzip 13 KB）；整包 tarball 从 164 KB 级上升到 ~330 KB，仍远小于注解前的 1.67 MB。
 - 质量基线：`pnpm check` 0 错误、**34 文件 440 用例全绿**、`pnpm build` + `verify:pkg` 通过；另用一个独立 TS 消费方工程编译验证 `PenDocument` / `PenNode` / `FrameSchema.shape` 等公共面可用。
 - 证据：`.agents/implementations/2026-11-15_1539_dts-debt.md`；决策 `ARCHITECTURE.md#D-013`。
+
+### 变更高亮补齐 establish / adjust / preset（2026-11-15）
+
+- 现象：只有 `update` / `batch` 这类走 `write()` 的操作会亮金边；`establish --apply`（在 `applyEstablish` 里直接 `saveDoc` 重写设计稿）与 `adjust` / `preset set`（只写 `__preset.ptr`）会改渲染却一条变更都不记 —— 页面刷新了但没有任何金边，看起来像高亮坏了。
+- 做法：`applyEstablish` / `applyAdjust` 返回 `touched`（被改写节点 + 经 preset 组间接受影响的节点，见 `src/doc/album.ts#nodesAffectedByPreset`）；tools 侧统一 `notifyChanges`；预设工具按「传文件就用它、传目录就扫根下每张设计稿」登记。**daemon 协议不动** —— 页面刷新本来就由 preset watcher 触发（`src/web/daemon.ts#/events` 同时监听 `__preset.ptr`）。
+- 仍缺：`paintress_font` 的 `add/remove/default`（见 `FUTURE.md#Improvements`）。
+- 质量基线：`pnpm check` 0 错误、**34 文件 454 用例全绿**、`pnpm build` 通过（ui 产物 hash 未变，本轮没动前端）。
+- 证据：`.agents/implementations/2026-11-15_1854_highlight-covers-establish-adjust-and-preset-writes.md`。

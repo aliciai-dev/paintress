@@ -91,6 +91,8 @@ describe('establish：提取候选', () => {
     const presets = listPresets(root).items;
     expect(presets.some((p) => p.type === 'color' && p.value === '#3B82F6')).toBe(true);
     expect(listPresetGroups(root).groups[res.written.groups[0] as string]).toBeDefined();
+    // 被改写的节点要回传：查看器靠这份名单画金边
+    expect([...res.touched].sort()).toEqual(['a', 'b']);
   });
 });
 
@@ -113,9 +115,11 @@ describe('adjust：dry-run 与落盘', () => {
     const presetDoc = readPresetDoc(design);
     const token = listPresets(root).items.find((p) => p.type === 'color')!;
     const plan = planAdjust(loaded, presetDoc, { key: token.key, value: '#123456' });
-    applyAdjust(design, presetDoc, plan);
+    const res = applyAdjust(design, presetDoc, plan);
     expect(listPresets(root).items.find((p) => p.key === token.key)?.value).toBe('#123456');
     expect(loadDoc(design).doc.variables?.[token.key]).toBeUndefined();
+    // 引用该 token 的节点：a、b 是通过 preset 组间接受影响的，计划里只写了 <preset:...>
+    expect([...res.touched].sort()).toEqual(['a', 'b']);
   });
 
   it('改组属性：影响面是被引用该组的节点', () => {
@@ -126,8 +130,9 @@ describe('adjust：dry-run 与落盘', () => {
     const plan = planAdjust(loaded, presetDoc, { group: groupName!, prop: 'fill', value: '#222222' });
     expect(plan.kind).toBe('group');
     expect(plan.changes.map((c) => c.where)).toContain('a');
-    applyAdjust(design, presetDoc, plan);
+    const res = applyAdjust(design, presetDoc, plan);
     expect(listPresetGroups(root).groups[groupName!]?.props['fill']).toBe('#222222');
+    expect([...res.touched].sort()).toEqual(['a', 'b']);
   });
 
   it('不存在的组直接报错；不存在的 token 在 apply 时报错（dry-run 只给 0 影响面）', () => {

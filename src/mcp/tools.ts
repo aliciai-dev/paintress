@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +8,7 @@ import { createDoc } from '../doc/create.js';
 import { collectIds, genId } from '../doc/id.js';
 import { validateDoc } from '../doc/validate.js';
 import { auditDoc, auditInputFrom } from '../doc/audit.js';
-import { applyAdjust, applyEstablish, planAdjust, planEstablish, readPresetDoc } from '../doc/album.js';
+import { applyAdjust, applyEstablish, nodesAffectedByPreset, planAdjust, planEstablish, readPresetDoc, type PresetBlast } from '../doc/album.js';
 import {
   applyProjectPresets,
   COMPONENTS_FILE,
@@ -104,6 +104,36 @@ function notifyChanges(path: string, ids: string[]): void {
   void sendRequest({ kind: 'changes', path: resolve(path), ids }, 2000).catch(() => {
     /* 高亮是尽力而为，失败不影响写入结果 */
   });
+}
+
+/** 设计稿文件：传文件就是它自己，传目录就是根目录下那些设计稿（`__` 开头的是项目文件，不算） */
+function designFilesOf(from: string): string[] {
+  const abs = resolve(from);
+  try {
+    if (!statSync(abs).isDirectory()) return [abs];
+  } catch {
+    return [];
+  }
+  return readdirSync(abs)
+    .filter((name) => /\.(ptr|pen)$/i.test(name) && !name.startsWith('__'))
+    .map((name) => join(abs, name));
+}
+
+/**
+ * 预设文件写完后：把「这次会连带改变哪些节点」记成变更，查看器刷新后据此画金边。
+ * 页面刷新本身不用管：daemon 的浏览器 SSE 同时监听 `__preset.ptr`。
+ * 传进来的是目录时，项目里每个设计稿各算一遍（人可能开着其中任意一张）。
+ */
+function notifyPresetBlast(from: string, blast: PresetBlast): void {
+  if (!isDaemonRunning()) return;
+  for (const file of designFilesOf(from)) {
+    try {
+      const loaded = loadDoc(file);
+      notifyChanges(file, nodesAffectedByPreset(loaded.doc, readPresetDoc(file), blast));
+    } catch {
+      /* 单张读不了不影响其余；高亮也不值得让写操作报错 */
+    }
+  }
 }
 
 /** 最近一次字体探针报告（viewer + 截图都写进 daemon）；daemon 没跑就返回空 */
@@ -668,14 +698,19 @@ export const TOOLS: Record<string, ToolDef> = {
           clean[k] = v;
         }
         const res = setPresetGroup(from, { name: reqStr(a, 'group'), target: reqStr(a, 'target'), props: clean });
+        notifyPresetBlast(from, { group: reqStr(a, 'group') });
         return { ok: true, ...res };
       }
       if (action === 'remove-group') {
-        return { ok: true, ...removePresetGroup(from, reqStr(a, 'group')) };
+        const group = reqStr(a, 'group');
+        const res = removePresetGroup(from, group);
+        notifyPresetBlast(from, { group });
+        return { ok: true, ...res };
       }
       const key = reqStr(a, 'key');
       if (action === 'remove') {
         const items = removePreset(from, key);
+        notifyPresetBlast(from, { token: key });
         return { ok: true, path: presetPathFor(from), items, groups: listPresetGroups(from).groups };
       }
       const type = optStr(a, 'type');
@@ -687,6 +722,7 @@ export const TOOLS: Record<string, ToolDef> = {
         value: reqStr(a, 'value'),
         ...(name !== undefined ? { name } : {}),
       });
+      notifyPresetBlast(from, { token: key });
       return { ok: true, path: presetPathFor(from), items, groups: listPresetGroups(from).groups };
     },
   },
@@ -789,7 +825,9 @@ export const TOOLS: Record<string, ToolDef> = {
       const minUses = typeof a['minUses'] === 'number' ? (a['minUses'] as number) : undefined;
       const plan = planEstablish(loaded.doc, { ...(minUses !== undefined ? { minUses } : {}) });
       if (a['apply'] !== true) return { ok: true, applied: false, ...plan };
-      return { ok: true, ...applyEstablish(path, plan, { expectedMtimeMs: loaded.mtimeMs }) };
+      const applied = applyEstablish(path, plan, { expectedMtimeMs: loaded.mtimeMs });
+      notifyChanges(path, applied.touched);
+      return { ok: true, ...applied };
     },
   },
 
@@ -825,7 +863,9 @@ export const TOOLS: Record<string, ToolDef> = {
         value,
       });
       if (a['apply'] !== true) return { ok: true, applied: false, ...plan };
-      return { ok: true, ...applyAdjust(path, presetDoc, plan) };
+      const applied = applyAdjust(path, presetDoc, plan, { doc: loaded.doc });
+      notifyChanges(path, applied.touched);
+      return { ok: true, ...applied };
     },
   },
 
