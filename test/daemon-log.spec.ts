@@ -138,9 +138,18 @@ spawnDescribe('后台 daemon：父进程退出后 stderr 断开', () => {
     expect(after.ok, `daemon 在写日志后没了（pid ${daemonPid}）`).toBe(true);
     expect(after.pid).toBe(daemonPid); // 还是同一个进程，不是重拉起来的
 
+    // 直接覆盖这次事故的操作：查看器「解绑」走的就是这个控制面请求
+    const unwatched = await sendRequest({ kind: 'unwatch', project: 'log-probe' }, 2000);
+    expect(unwatched.ok).toBe(true);
+    const afterUnwatch = await ping(2000);
+    expect(afterUnwatch.ok, '解绑项目后 daemon 不应退出').toBe(true);
+    expect(afterUnwatch.pid).toBe(daemonPid);
+
     // stderr 断了，日志文件里仍然可查
     const log = join(home, 'web.log');
     expect(existsSync(log)).toBe(true);
-    expect(readFileSync(log, 'utf8')).toContain('项目 log-probe 初始化');
+    const logText = readFileSync(log, 'utf8');
+    expect(logText).toContain('项目 log-probe 初始化');
+    expect(logText).toContain('解绑项目 log-probe');
   }, 40_000);
 });
