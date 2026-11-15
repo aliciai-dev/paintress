@@ -7,7 +7,7 @@
 <p align="center">
   <a href="demo/demo-calculator.webp"><img src="demo/demo-calculator.webp" width="880" alt="The paintress viewer showing a calculator UI the agent drew from a single prompt"></a>
 </p>
-<p align="center"><sub>One line of chat — <em>“设计一个时尚的计算器界面”</em> (“design a stylish calculator UI”) — drawn by the agent, then opened in the viewer.</sub></p>
+<p align="center"><sub>One line of chat — <em>“design a stylish calculator UI”</em> — drawn by the agent, then opened in the viewer.</sub></p>
 
 **To install: paste this repository's URL into your agent and ask it to install paintress.** Agents that need a precise procedure will find one at the [end of this file](#installation-guide-for-ai-agents).
 
