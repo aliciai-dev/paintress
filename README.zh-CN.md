@@ -91,7 +91,8 @@ paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  渲染为 PN
 paintress web [--port n] [--bind auto|loopback|all] [--idle ms] [--foreground]
                                                        确保查看器在跑（幂等，立刻返回）
 paintress ping | status | stop                         查看器控制
-paintress watch <name> <dir> [--depth n] | unwatch <name>  注册/移除要浏览的目录
+paintress watch <name> <dir> [--depth n] [--force] | unwatch <name>
+                                                          注册/移除要浏览的目录
 paintress attach <name>                                agent 工作期间保持查看器存活
 
 paintress install [client...] [--dry-run]              写入 MCP 配置条目

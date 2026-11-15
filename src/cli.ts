@@ -58,7 +58,7 @@ import { VERSION } from './shared/version.js';
  *   paintress web --foreground                       占住终端跑（日志直接可见）
  *   paintress ping                                    检查 web 是否在运行
  *   paintress status                                  查看已注册项目
- *   paintress watch <name> <dir>                      注册要跟踪的目录
+ *   paintress watch <name> <dir> [--depth n] [--force]   注册要跟踪的目录
  *   paintress unwatch <name>                          移除项目
  *   paintress attach <name>                           保持连接作为存活信号
  *   paintress stop                                    停止 web
@@ -274,7 +274,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     if (cmd === 'watch') {
-      if (!file || !a1) throw new Error('用法：paintress watch <name> <dir> [--depth 1..6]');
+      if (!file || !a1) throw new Error('用法：paintress watch <name> <dir> [--depth 1..6] [--force]');
       const depth = flagNum(flags, 'depth');
       const force = flags['force'] === true;
       // 目录要按“调用者的 cwd”解析成绝对路径：daemon 是常驻进程，

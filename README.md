@@ -91,7 +91,8 @@ paintress shot <file> <out.png> [--scale 0.2..2] [--board id|name]  render to PN
 paintress web [--port n] [--bind auto|loopback|all] [--idle ms] [--foreground]
                                                         ensure the viewer is running (idempotent, returns at once)
 paintress ping | status | stop                          viewer control
-paintress watch <name> <dir> [--depth n] | unwatch <name>  register a directory to browse
+paintress watch <name> <dir> [--depth n] [--force] | unwatch <name>
+                                                           register a directory to browse
 paintress attach <name>                                 keep the viewer alive while an agent works
 
 paintress install [client...] [--dry-run]               write MCP config entries

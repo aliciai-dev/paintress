@@ -58,7 +58,9 @@ export class DesignRootUnresolvedError extends Error {
 }
 
 export interface EnsureViewerOptions {
-  /** 要注册的目录；给了就完全照办（不猜）。相对路径按本进程 cwd 解析（daemon 的 cwd 不可信） */
+  /** 隐式解析设计根的起点，默认本进程 cwd；autoRegister(cwd) 用它传入调用方目录 */
+  cwd?: string;
+  /** 要注册的目录；给了就完全照办（不猜）。相对路径按 `cwd` 解析（daemon 的 cwd 不可信） */
   dir?: string;
   /** 项目名，默认由目录推导（父目录/自身） */
   project?: string;
@@ -70,11 +72,16 @@ export interface EnsureViewerOptions {
   scaffold?: boolean;
 }
 
-/**
- * 每个项目的 attach 连接必须被持有：daemon 用「连接是否还在」判定 agent 是否活着。
+/** 每个项目的 attach 连接必须被持有：daemon 用「连接是否还在」判定 agent 是否活着。
  * 连接一断，agent 自动注册的项目会在宽限期后退场。
  */
 const handles = new Map<string, AttachHandle>();
+
+/**
+ * 成功的隐式解析在进程内复用：ensureViewer 会在每次写操作前走一遍，
+ * 不能每次都同步扫描整个仓库的一层子目录。没把握的结果不缓存，建好 design/ 后下次即可生效。
+ */
+const designRootCache = new Map<string, DesignRootDecision>();
 
 /** 从 daemon 同步「注册根」，让 doc 层的 findProjectRoot 以 watch 为准 */
 let rootsSynced = false;
@@ -113,12 +120,23 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
   }
   // 先定「设计稿的家」：显式目录照办，否则按 paintress.json / 目录名 / 设计稿分布来解析。
   // 解析不出把握就不注册 —— 宁可不画，也不要在用户的仓库根上留两份空项目文件。
-  const decision = resolveDesignRoot(process.cwd(), opts.dir);
-  if (!decision.confident) throw new DesignRootUnresolvedError(decision);
+  const cwd = resolve(opts.cwd ?? process.cwd());
+  const explicitDir = opts.dir === undefined || opts.dir.trim() === '' ? undefined : resolve(cwd, opts.dir);
+  const cacheKey = `${cwd}\0${explicitDir ?? ''}`;
+  let decision = designRootCache.get(cacheKey);
+  if (decision === undefined) {
+    decision = resolveDesignRoot(cwd, explicitDir);
+    if (decision.confident) designRootCache.set(cacheKey, decision);
+  }
+  if (!decision.confident) {
+    if (opts.force !== true) throw new DesignRootUnresolvedError(decision);
+    // force 同时覆盖「没有可信候选」与 daemon 的项目根门槛；目标始终是明确的当前目录，不替人挑候选。
+    decision = { ...decision, root: cwd, reason: 'cwd', confident: true, message: `按 force 注册当前目录：${cwd}` };
+  }
   const dir = decision.root;
   const project = opts.project !== undefined ? sanitizeProjectName(opts.project) : deriveProjectName(dir);
   // 自动注册（没给 dir）绝不 scaffold：cwd 未必是设计根。显式指定时才按老行为建项目文件。
-  const scaffold = opts.scaffold ?? opts.dir !== undefined;
+  const scaffold = opts.scaffold ?? explicitDir !== undefined;
 
   const running = await queryDaemon();
   const attached = handles.get(project);
@@ -173,7 +191,7 @@ export async function ensureViewer(opts: EnsureViewerOptions = {}): Promise<View
 export async function autoRegister(cwd: string = process.cwd()): Promise<ViewerInfo | null> {
   if (autoWebDisabled()) return null;
   try {
-    const info = await ensureViewer({ dir: undefined, scaffold: false });
+    const info = await ensureViewer({ cwd, scaffold: false });
     if (resolve(info.root) !== resolve(cwd)) {
       process.stderr.write(`paintress: 按设计根注册 ${info.project}（${info.root}）—— ${info.designRoot.message}\n`);
     }

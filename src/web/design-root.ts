@@ -117,22 +117,45 @@ function hasScaffold(dir: string): boolean {
   }
 }
 
-/** cwd 及以上的 `paintress.json` 里声明的设计根（就近优先；解析不到就返回 null） */
-function declaredRoot(from: string, maxUp = 8): string | null {
+/** 声明查找的结果：配置有问题也算一个结论，不能静默退回猜测 */
+type DeclaredRoot = { root: string } | { error: string } | null;
+
+/** 仓库边界：软提示（AGENTS.md / CLAUDE.md）可以出现在子目录，不能截断向上查找 */
+function isRepositoryBoundary(dir: string): boolean {
+  return projectRootMarkers(dir).some((m) => m.file !== 'AGENTS.md' && m.file !== 'CLAUDE.md');
+}
+
+/** cwd 及以上的 `paintress.json` 里声明的设计根（就近优先；不越过仓库根） */
+function declaredRoot(from: string, maxUp = 8): DeclaredRoot {
   let dir = resolve(from);
   for (let hop = 0; hop < maxUp; hop++) {
     const cfg = join(dir, CONFIG_FILE);
     if (existsSync(cfg)) {
+      let raw: { root?: unknown };
       try {
-        const raw = JSON.parse(readFileSync(cfg, 'utf8')) as { root?: unknown };
-        if (typeof raw.root === 'string' && raw.root.trim() !== '') {
-          const target = resolve(dir, raw.root.trim());
-          if (existsSync(target) && statSync(target).isDirectory()) return target;
+        raw = JSON.parse(readFileSync(cfg, 'utf8')) as { root?: unknown };
+      } catch (cause) {
+        return {
+          error: `${CONFIG_FILE} 不是合法 JSON：${cfg}（${cause instanceof Error ? cause.message : String(cause)}）。修正后再注册，或显式传 dir。`,
+        };
+      }
+      if (raw.root !== undefined) {
+        if (typeof raw.root !== 'string' || raw.root.trim() === '') {
+          return { error: `${CONFIG_FILE} 的 root 必须是非空目录字符串：${cfg}。修正后再注册，或显式传 dir。` };
         }
-      } catch {
-        /* 坏 JSON：不挡住默认行为，继续往上找 */
+        const target = resolve(dir, raw.root.trim());
+        try {
+          if (!statSync(target).isDirectory()) {
+            return { error: `${CONFIG_FILE} 声明的 root 不是目录：${target}（配置：${cfg}）。修正后再注册，或显式传 dir。` };
+          }
+        } catch {
+          return { error: `${CONFIG_FILE} 声明的 root 不存在或不可读：${target}（配置：${cfg}）。修正后再注册，或显式传 dir。` };
+        }
+        return { root: target };
       }
     }
+    // 配置属于当前仓库；越过仓库根去读上级目录的 paintress.json 会把别的项目的约定套进来
+    if (isRepositoryBoundary(dir)) break;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -256,8 +279,11 @@ export function resolveDesignRoot(from: string, explicit?: string): DesignRootDe
   }
 
   const declared = declaredRoot(base);
+  if (declared !== null && 'error' in declared) {
+    return { root: base, reason: 'none', confident: false, candidates: [], message: declared.error };
+  }
   if (declared !== null) {
-    return { root: declared, reason: 'declared', confident: true, candidates: [], message: describe(declared, 'declared', base) };
+    return { root: declared.root, reason: 'declared', confident: true, candidates: [], message: describe(declared.root, 'declared', base) };
   }
 
   const candidates: RootCandidate[] = [evaluate(base, '.', 0)];

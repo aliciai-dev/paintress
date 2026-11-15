@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CONFIG_FILE, guardProjectRoot, projectRootMarkers, resolveDesignRoot } from '../src/web/design-root.js';
 import { COMPONENTS_FILE, PRESET_FILE } from '../src/doc/project.js';
 import { startDaemon, type DaemonHandle } from '../src/web/daemon.js';
 import { sendRequest } from '../src/web/client.js';
+import { autoRegister, closeViewerHandles } from '../src/web/autoregister.js';
+import { TOOLS } from '../src/mcp/tools.js';
 
 /**
  * 设计根解析与项目根硬门槛。
@@ -62,6 +64,40 @@ describe('resolveDesignRoot', () => {
     writeFileSync(join(repo, CONFIG_FILE), JSON.stringify({ root: 'ui' }));
     mkdirSync(join(repo, 'ui', 'inner'), { recursive: true });
     expect(resolveDesignRoot(join(repo, 'ui', 'inner')).root).toBe(join(repo, 'ui'));
+  });
+
+  it('声明的 root 不存在时 fail closed，不回退去猜另一个目录', () => {
+    const repo = tmp('declared-missing');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    writeFileSync(join(repo, CONFIG_FILE), JSON.stringify({ root: 'missing' }));
+    mkdirSync(join(repo, 'design'));
+    writeFileSync(join(repo, 'design', 'a.ptr'), pen('ab'));
+
+    const decision = resolveDesignRoot(repo);
+    expect(decision.confident).toBe(false);
+    expect(decision.message).toContain('不存在或不可读');
+    expect(decision.candidates).toEqual([]);
+  });
+
+  it('坏 JSON 同样 fail closed，不静默忽略人的配置', () => {
+    const repo = tmp('declared-invalid');
+    writeFileSync(join(repo, CONFIG_FILE), '{');
+    const decision = resolveDesignRoot(repo);
+    expect(decision.confident).toBe(false);
+    expect(decision.message).toContain('不是合法 JSON');
+  });
+
+  it('向上找配置不越过仓库根，避免套用上级项目的约定', () => {
+    const parent = tmp('declared-boundary');
+    const outside = join(parent, 'outside');
+    const repo = join(parent, 'repo');
+    mkdirSync(outside);
+    mkdirSync(join(repo, '.git'), { recursive: true });
+    writeFileSync(join(parent, CONFIG_FILE), JSON.stringify({ root: 'outside' }));
+
+    const decision = resolveDesignRoot(repo);
+    expect(decision.reason).not.toBe('declared');
+    expect(decision.confident).toBe(false);
   });
 
   it('仓库根 + design/ 子目录：挑 design/，仓库根没有 package.json 也不选它', () => {
@@ -168,6 +204,7 @@ describe('daemon 注册门槛（回归：仓库根不再长项目文件）', () 
   });
 
   afterAll(async () => {
+    closeViewerHandles();
     await daemon.close();
     rmSync(home, { recursive: true, force: true });
     delete process.env['PAINTRESS_HOME'];
@@ -209,5 +246,36 @@ describe('daemon 注册门槛（回归：仓库根不再长项目文件）', () 
     expect(res.ok).toBe(true);
     expect(existsSync(join(dir, PRESET_FILE))).toBe(false);
     expect(existsSync(join(dir, COMPONENTS_FILE))).toBe(false);
+  });
+
+  it('autoRegister(cwd) 以传入目录为起点选设计根，且不在仓库根建文件', async () => {
+    const repo = tmp('autoregister-cwd');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    mkdirSync(join(repo, 'design'));
+    writeFileSync(join(repo, 'design', 'a.ptr'), pen('33'));
+
+    const info = await autoRegister(repo);
+    expect(info).not.toBeNull();
+    expect(info?.root).toBe(join(repo, 'design'));
+    expect(info?.designRoot.reason).toBe('child');
+    expect(existsSync(join(repo, PRESET_FILE))).toBe(false);
+    expect(existsSync(join(repo, COMPONENTS_FILE))).toBe(false);
+  });
+
+  it('paintress_viewer 的 force: true 能注册没有可信候选的当前目录（与错误提示一致）', async () => {
+    const repo = tmp('force-unresolved');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(repo);
+    try {
+      const out = (await TOOLS['paintress_viewer']!.run({ force: true })) as Record<string, unknown>;
+      expect(out['ok']).toBe(true);
+      expect(out['root']).toBe(repo);
+      expect(out['designRoot']).toMatchObject({ reason: 'cwd', confident: true });
+      // MCP 工具与旧行为一致：成功打开项目后保证项目文件存在
+      expect(existsSync(join(repo, PRESET_FILE))).toBe(true);
+      expect(existsSync(join(repo, COMPONENTS_FILE))).toBe(true);
+    } finally {
+      cwd.mockRestore();
+    }
   });
 });
