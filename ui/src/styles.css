@@ -569,8 +569,9 @@ a.ghost {
 /*
  * 「全部」钉在左边：横向滚到后面几个画板时，回看整张画布仍然是一次点击。
  * 底色与 boardbar 一致，滚过去的按钮从它下面穿过才会被盖住。
+ * 用类名而不是 :first-child —— `<Show>` 会在这个位置留注释/文本标记，位置选择器不可靠。
  */
-.boardbar > .board:first-child {
+.boardbar > .board-all {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -578,7 +579,7 @@ a.ghost {
   box-shadow: 6px 0 8px -6px rgba(31, 42, 55, 0.18);
 }
 
-.boardbar > .board:first-child.active {
+.boardbar > .board-all.active {
   background: var(--accent-soft);
 }
 

@@ -922,8 +922,10 @@ export default function App() {
       onLevelStep: stepLevel,
       onQuickSwitch: () => setSwitcherOpen(true),
     });
-    setBoards(readBoards());
-    setActiveBoard(null);
+    const next = readBoards();
+    setBoards(next);
+    // 单画板文件没有「全部」这一态（它和唯一的画板是同一块区域）：直接选中它，导出控件才始终有目标
+    setActiveBoard(next.length === 1 ? (next[0]?.id ?? null) : null);
     restoreViewport();
     doc.addEventListener('click', onFrameClick, true);
     doc.addEventListener('mousemove', onFrameMove, true);
@@ -941,11 +943,19 @@ export default function App() {
     else viewportCtl.fitAll();
   }
 
+  /// 导出目标：选中的画板；只有一个画板时它自己就是目标（画板条上没有「全部」可点）
+  function exportBoardId(): string | null {
+    const selected = activeBoard();
+    if (selected !== null) return selected;
+    const all = boards();
+    return all.length === 1 ? (all[0]?.id ?? null) : null;
+  }
+
   /** 单帧导出：走浏览器原生下载（Content-Disposition），不把 PNG 读进内存 */
   function downloadFrame(): void {
     const project = activeProject();
     const file = activeFile();
-    const board = activeBoard();
+    const board = exportBoardId();
     if (project === null || file === null || board === null) return;
     window.location.href = exportUrl(project, file, board, exportScale());
   }
@@ -1362,12 +1372,18 @@ export default function App() {
             </div>
           }
         >
-          <Show when={boards().length > 1}>
+          <Show when={boards().length > 0}>
             <div class="boardbar">
-              {/* 「全部」不参与滚动：横向翻到后面几个画板时，回看整张画布仍然是一次点击 */}
-              <button class="board" classList={{ active: activeBoard() === null }} onClick={() => focusBoard(null)}>
-                {m().allBoards}
-              </button>
+              {/*
+                「全部」不参与滚动：横向翻到后面几个画板时，回看整张画布仍然是一次点击。
+                只有一个画板时不出现 —— 它就是整张画布，多一个按钮只是噪音；
+                画板条本身要留着，导出倍率与按钮挂在它上面，不能被单画板文件吞掉。
+              */}
+              <Show when={boards().length > 1}>
+                <button class="board board-all" classList={{ active: activeBoard() === null }} onClick={() => focusBoard(null)}>
+                  {m().allBoards}
+                </button>
+              </Show>
               <div
                 class="boardbar-scroll"
                 ref={(el) => {
@@ -1390,7 +1406,7 @@ export default function App() {
                 )}
                 </For>
               </div>
-              <Show when={activeBoard() !== null}>
+              <Show when={exportBoardId() !== null}>
                 <div class="boardbar-export">
                   <span class="hint">{m().exportScale}</span>
                   <select

@@ -267,6 +267,29 @@ browserDescribe('查看器交互（真实浏览器）', () => {
     }
   });
 
+  it('单画板文件：画板条与导出控件仍然在，只省掉「全部」', async () => {
+    if (browser === undefined) throw new Error('浏览器未就绪');
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+    try {
+      await page.goto(`http://127.0.0.1:${daemon.port}/${PROJECT}?file=design.ptr`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.boardbar');
+      // 唯一的画板自动选中：条上只有它一个，「全部」不出现
+      expect(await page.locator('.boardbar .board').count()).toBe(1);
+      expect(await page.locator('.board-all').count()).toBe(0);
+      expect(await page.locator('.boardbar .board.active').count()).toBe(1);
+      // 导出倍率与按钮常驻，不需要先点一下画板
+      await page.waitForSelector('.boardbar-export');
+      expect(await page.locator('.boardbar-export select option').count()).toBe(3);
+
+      const downloadEvent = page.waitForEvent('download');
+      await page.locator('.boardbar-export button').click();
+      const download = await downloadEvent;
+      expect(download.suggestedFilename()).toMatch(/\.png$/);
+    } finally {
+      await page.close();
+    }
+  });
+
   it('浮动工具条：预设面板改值写回文件，组件画廊显示 tile', async () => {
     const page = await openViewer();
     try {
