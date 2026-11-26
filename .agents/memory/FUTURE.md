@@ -54,7 +54,7 @@
 
 | 条目 | 是什么 | 为什么等 | 触发条件 |
 | --- | --- | --- | --- |
-| 同目录挂多个项目名时的 `change` 推送 fan-out | `watchDesigns` 按 root 复用监听器（只保留第一个），`depth` 不同则**重建**并换掉监听器；若第二个注册带新 depth，原监听器被换掉，可能把另一项目的变更报到它头上（2026-11-26 已在回调内按 root 查 owners，但 depth 触发的重建仍属薄弱处） | 真实场景里同一目录挂两个名字且 depth 不一致极少出现 | 出现第二个名字的时间戳不更新、或 A 项目收到 B 目录的事件 |
+| 深度变化触发 watcher 重建时的瞬时盲区 | `watchDesigns` 在 depth 不同时先 `close()` 旧 watcher 再建新的，重建窗口内的 change 会丢（`src/web/watcher.ts#watchDesigns`） | 只有「同一目录已注册后又用不同 depth 再注册」才会走重建；属既有行为，与 owner 归属无关（2026-11-26 已把 owner 改为按 root 在事件时查表，重建后两个名字都能收到） | 出现一次真实的漏更新，或 depth 需要支持运行时升温 |
 | 列表「最近编辑」的深度未达时事件乱入 | watcher 报的 `change` 可能落在扫描深度之外，`designs` 直接广播，前端会给未列出的路径插一行 `fileMeta`（不可见，无害） | 列表只渲染 `files()`，多余 key 不显示 | 后续做「最近优先」排序/筛选时要先按 `files()` 过滤 |
 | 写入热点的 150ms 合并未做 | `designs` 事件每次写盘都发，没有 debounce（规格 Risks 里承诺的 150ms 合并未实现） | chokidar `awaitWriteFinish` 已消掉多数抖动；一次 batch 会重排整个文件键序但只写一次 | 实测写一次产生多条推送，或 SSE 带宽明显吃紧 |
 
