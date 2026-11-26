@@ -592,6 +592,10 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               const entry = registry.watch(req.project, req.dir, req.depth, req.owner === 'agent' ? { owner: 'agent' } : {});
               // 人显式 watch 的项目撤回待执行的自动退场
               cancelAutoDetach(entry.name);
+              // 同目录可以挂多个项目名（MCP 自动注册 + 人工 watch），也都会重复走到这里：
+              // watcher 按 root 复用，监听器**只保留第一个**；此处同样不能再按 entry.name 推，
+              // 否则另一条通道会把第一个项目的名头扣在别的目录变更上。
+              // 正确的 owner 以监听时的 root 为准，逐个已注册项目各自报一遍。
               watchers.watchDesigns(entry.rootReal, entry.depth, (file, kind) => {
                 if (kind !== 'change') {
                   // 列表结构变了（新增/删除）：走全量快照，前端会跟着重拉文件列表
@@ -605,12 +609,15 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 } catch {
                   /* change 与 unlink 赛跑：真的没了就交给 projects 事件 */
                 }
-                broadcastDesigns({
-                  project: entry.name,
-                  path: relative(entry.rootReal, file).split(sep).join('/'),
-                  at: Date.now(),
-                  mtime,
-                });
+                const owners = registry.all().filter((p) => p.rootReal === entry.rootReal);
+                for (const owner of owners) {
+                  broadcastDesigns({
+                    project: owner.name,
+                    path: relative(owner.rootReal, file).split(sep).join('/'),
+                    at: Date.now(),
+                    mtime,
+                  });
+                }
               });
               // 项目级预设 / 组件库：不存在就建（已存在一个字都不动）。失败不影响注册。
               // 自动注册（scaffold: false）不建：agent 的 cwd 未必是设计根，随手建就是仓库根上的脏文件。

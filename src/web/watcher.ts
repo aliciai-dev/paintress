@@ -102,8 +102,9 @@ export class WatchManager {
   }
 
   /**
-   * 项目设计稿目录监听：仅 .ptr / .pen 的增删会触发，且遵守项目扫描深度。
-   * 相同 root + depth 重复调用复用同一 watcher；depth 变化时重建。
+   * 项目设计稿目录监听：仅 .ptr / .pen 的 add / change / unlink 会触发，且遵守项目扫描深度。
+   * 相同 root + depth 重复调用复用同一 watcher（监听器只保留第一个，同一目录挂多个项目名时
+   * 由调用方在回调里自行 fan-out）；depth 变化时重建。
    */
   watchDesigns(root: string, depth: number, onChange: DesignListener): DesignWatchHandle {
     const existing = this.designs.get(root);

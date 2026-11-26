@@ -50,6 +50,14 @@
 | 逐边描边宽度 + outer/center | 四边不同线宽且 `strokeAlignment` 非 inner（`src/render/style.ts#strokeToCss`） | CSS outline 不支持逐边；现在退回 border + 警告 | 真实稿出现该组合 |
 | 网格渐变精度 | 多层径向渐变只是近似，不是严格双线性 mesh；`points` 控制点仍按均匀网格处理（`src/render/style.ts#meshLayers`） | 精确 mesh 需要独立渲染后端；当前近似在大色块上够用 | 设计稿依赖网格控制点，或渐变色带明显穿帮 |
 
+### 查看器
+
+| 条目 | 是什么 | 为什么等 | 触发条件 |
+| --- | --- | --- | --- |
+| 同目录挂多个项目名时的 `change` 推送 fan-out | `watchDesigns` 按 root 复用监听器（只保留第一个），`depth` 不同则**重建**并换掉监听器；若第二个注册带新 depth，原监听器被换掉，可能把另一项目的变更报到它头上（2026-11-26 已在回调内按 root 查 owners，但 depth 触发的重建仍属薄弱处） | 真实场景里同一目录挂两个名字且 depth 不一致极少出现 | 出现第二个名字的时间戳不更新、或 A 项目收到 B 目录的事件 |
+| 列表「最近编辑」的深度未达时事件乱入 | watcher 报的 `change` 可能落在扫描深度之外，`designs` 直接广播，前端会给未列出的路径插一行 `fileMeta`（不可见，无害） | 列表只渲染 `files()`，多余 key 不显示 | 后续做「最近优先」排序/筛选时要先按 `files()` 过滤 |
+| 写入热点的 150ms 合并未做 | `designs` 事件每次写盘都发，没有 debounce（规格 Risks 里承诺的 150ms 合并未实现） | chokidar `awaitWriteFinish` 已消掉多数抖动；一次 batch 会重排整个文件键序但只写一次 | 实测写一次产生多条推送，或 SSE 带宽明显吃紧 |
+
 ### 写入安全
 
 | 条目 | 是什么 | 为什么等 | 触发条件 |

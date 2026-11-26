@@ -187,6 +187,36 @@ describe('HTTP 路由', () => {
     }
   });
 
+  it('同一目录挂两个项目名时，designs 两个名字都推（watcher 按 root 复用）', async () => {
+    // MCP 自动注册 + 人工 watch 同一路径时只会有一个监听器（第一个），
+    // 若回调直接闭包用 entry.name，第二个项目的行永远收不到自己的事件
+    await sendRequest({ kind: 'watch', project: 'alias-of-test-proj', dir: projectDir });
+    const target = join(projectDir, 'design.pen');
+    const controller = new AbortController();
+    const stream = await fetch(`${baseUrl}/events`, { signal: controller.signal });
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    try {
+      writeFileSync(target, readFileSync(target));
+      let seen = '';
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !(seen.includes('"project":"alias-of-test-proj"') && seen.includes('"project":"test-proj"'))) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => setTimeout(() => r(null), 200)),
+        ]);
+        if (chunk === null) continue;
+        if (chunk.value !== undefined) seen += new TextDecoder().decode(chunk.value);
+        if (chunk.done) break;
+      }
+      expect(seen).toContain('"project":"test-proj"');
+      expect(seen).toContain('"project":"alias-of-test-proj"');
+    } finally {
+      controller.abort();
+      await sendRequest({ kind: 'unwatch', project: 'alias-of-test-proj' });
+    }
+  });
+
   it('GET /api/projects/:unknown/files → 404 JSON', async () => {
     const res = await fetch(`${baseUrl}/api/projects/nope/files`);
     expect(res.status).toBe(404);
