@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -345,6 +345,42 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       await page.close();
     }
   }, 20_000);
+
+  it('设计稿列表：改过的稿出金点，撒高亮后点灭、时间留下', async () => {
+    // 先把上一轮遗留的写入记录清掉，免得「金点从哪来」说不清
+    await sendRequest({ kind: 'clear-changes', project: PROJECT });
+    // refs.ptr 退到两天前：超过 24 小时窗口，它的行不该有相对时间
+    const stale = join(dir, 'refs.ptr');
+    const twoDaysAgo = new Date(Date.now() - 48 * 3600_000);
+    utimesSync(stale, twoDaysAgo, twoDaysAgo);
+
+    const page = await openViewer();
+    try {
+      const row = (file: string) => page.locator('.section.files li', { hasText: file });
+      expect(await page.locator('.section.files .dot.fresh').count()).toBe(0);
+      await row('second.ptr').locator('.item-time').waitFor({ state: 'visible', timeout: 10_000 });
+      expect(await row('refs.ptr').locator('.item-time').count()).toBe(0);
+
+      // 不刷新页面：改一份老稿，它自己长出时间（目录 change → designs 事件）
+      writeFileSync(stale, readFileSync(stale));
+      await row('refs.ptr').locator('.item-time').waitFor({ state: 'visible', timeout: 10_000 });
+      expect(await row('refs.ptr').locator('.item-time').innerText()).toMatch(/刚刚|just now/);
+
+      // 写入记录 → 金点出现，与画布金边同源同 TTL
+      await sendRequest({ kind: 'changes', path: join(dir, 'second.ptr'), ids: ['title'] });
+      await row('second.ptr').locator('.dot.fresh').waitFor({ state: 'visible', timeout: 5000 });
+      expect(await page.locator('.section.files .dot.fresh').count()).toBe(1);
+      expect(await row('second.ptr').locator('.item-time.fresh').count()).toBe(1);
+
+      // 撤高亮：点没了，时间文字还在（文件确实被写过）
+      await sendRequest({ kind: 'clear-changes', project: PROJECT });
+      await row('second.ptr').locator('.dot.fresh').waitFor({ state: 'detached', timeout: 5000 });
+      expect(await row('second.ptr').locator('.item-time').count()).toBe(1);
+      expect(await row('second.ptr').locator('.item-time.fresh').count()).toBe(0);
+    } finally {
+      await page.close();
+    }
+  }, 30_000);
 
   it('标签页标题：跟着当前设计稿走，不再只有 paintress', async () => {
     const page = await openViewer();

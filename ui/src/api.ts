@@ -1,8 +1,8 @@
 /** 与 daemon 的 JSON API 契约（服务端见 src/web/daemon.ts） */
 
-import type { Mark, MarkInput } from '../../src/shared/api-types.js';
+import type { DesignsEvent, DesignFileMeta, FileChange, Mark, MarkInput } from '../../src/shared/api-types.js';
 
-export type { Mark, MarkInput };
+export type { DesignsEvent, DesignFileMeta, FileChange, Mark, MarkInput };
 
 export interface ProjectInfo {
   name: string;
@@ -40,6 +40,8 @@ export interface FilesResponse {
   project: string;
   files: string[];
   depth: number;
+  /** 每份稿的 stat（旧 daemon 无此字段：前端不画「最近编辑」标识，与 label 缺省回退同一条降级路线） */
+  meta?: Record<string, DesignFileMeta>;
 }
 
 /** 单节点（属性面板）：磁盘上的原始节点 + 变量表（项目预设打底、本地优先） */
@@ -159,6 +161,19 @@ export function fetchChanges(project: string, file: string): Promise<ChangesResp
   return getJson<ChangesResponse>(
     `/api/changes?project=${encodeURIComponent(project)}&path=${encodeURIComponent(file)}`,
   );
+}
+
+export interface ProjectChangesResponse {
+  ok: boolean;
+  changes: FileChange[];
+}
+
+/**
+ * 项目内所有未过期的写入记录：侧栏一次问全，不逐文件请求。
+ * 这些记录同时决定画布金边与列表金点（同一个 TTL）。
+ */
+export function fetchProjectChanges(project: string): Promise<ProjectChangesResponse> {
+  return getJson<ProjectChangesResponse>(`/api/changes?project=${encodeURIComponent(project)}`);
 }
 
 // ---------- 项目预设 / 组件库 / 笔记（规格见 specs/project-presets.md、specs/components.md）----------

@@ -44,12 +44,20 @@ function clampDepth(raw: number | undefined): number {
 
 export const DESIGN_EXT = new Set(['.ptr', '.pen']);
 
+export interface DesignFileStat {
+  /** 相对项目根，统一用 `/` */
+  path: string;
+  mtimeMs: number;
+  size: number;
+}
+
 /**
- * 项目内设计稿的相对路径；侧栏与预设变更通知共用同一份目录边界。
+ * 项目内设计稿的相对路径与 stat；侧栏与预设变更通知共用同一份目录边界。
+ * 遍历时本来就要 stat 每个条目（判目录 / 判扩展名），mtime 顺手带出来，不额外付 IO。
  * 返回相对路径统一用 `/`，调用方再按自己的用途 join 成绝对路径或拼 URL。
  */
-export function listDesignFiles(root: string, maxDepth = DEFAULT_DEPTH): string[] {
-  const out: string[] = [];
+export function listDesignFilesWithStat(root: string, maxDepth = DEFAULT_DEPTH): DesignFileStat[] {
+  const out: DesignFileStat[] = [];
   const skip = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'target', '.venv', 'venv', '__pycache__']);
   const walk = (dir: string, rel: string, depth: number): void => {
     if (depth > maxDepth) return;
@@ -75,12 +83,17 @@ export function listDesignFiles(root: string, maxDepth = DEFAULT_DEPTH): string[
       } else if (DESIGN_EXT.has(extname(name).toLowerCase())) {
         // `__preset.ptr` / `__components.ptr` 是项目级基础设施，走各自的接口，
         // 不在设计稿列表里出现（否则侧栏和文件数都会被它们污染）
-        if (!name.startsWith('__')) out.push(relPath);
+        if (!name.startsWith('__')) out.push({ path: relPath, mtimeMs: st.mtimeMs, size: st.size });
       }
     }
   };
   walk(root, '', 0);
   return out;
+}
+
+/** 只要路径的既有调用方（文件数、MCP 的 designFilesOf）走这里 */
+export function listDesignFiles(root: string, maxDepth = DEFAULT_DEPTH): string[] {
+  return listDesignFilesWithStat(root, maxDepth).map((file) => file.path);
 }
 
 export class Registry {
@@ -135,9 +148,14 @@ export class Registry {
     return [...this.projects.values()];
   }
 
-  /** 列出项目内设计稿相对路径（深度由 entry.depth 控制，默认 3、上限 6） */
+  /** 列出项目内设计稿（路径 + stat；深度由 entry.depth 控制，默认 3、上限 6） */
+  listDesignStats(entry: ProjectEntry): DesignFileStat[] {
+    return listDesignFilesWithStat(entry.rootReal, entry.depth);
+  }
+
+  /** 列出项目内设计稿相对路径 */
   listDesigns(entry: ProjectEntry): string[] {
-    return listDesignFiles(entry.rootReal, entry.depth);
+    return this.listDesignStats(entry).map((file) => file.path);
   }
 
   info(entry: ProjectEntry): ProjectInfo {

@@ -50,6 +50,21 @@ export class ChangesStore {
     return hit;
   }
 
+  /**
+   * 项目内所有未过期的变更（侧栏列表一次问全，不必逐文件请求）。
+   * 最近写入的排在前面。
+   */
+  list(project: string): ChangeSet[] {
+    const now = Date.now();
+    const out: ChangeSet[] = [];
+    for (const set of this.byKey.values()) {
+      if (set.project !== project) continue;
+      if (now - set.at > TTL_MS) continue;
+      out.push(set);
+    }
+    return out.sort((a, b) => b.at - a.at);
+  }
+
   clear(project: string): number {
     let n = 0;
     for (const [key, set] of this.byKey) {

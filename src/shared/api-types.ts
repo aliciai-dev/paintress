@@ -19,6 +19,33 @@ export interface Mark {
   at: number;
 }
 
+/** 设计稿列表元信息（侧栏「最近编辑」标识用） */
+export interface DesignFileMeta {
+  /** 文件 mtime（epoch ms） */
+  mtime: number;
+}
+
+/** 一份稿的一次写入记录：金边与列表金点共用同一份数据 */
+export interface FileChange {
+  file: string;
+  at: number;
+  ids: string[];
+}
+
+/**
+ * 注册表 SSE 通道（`/events` 无 project 参数）的 `designs` 事件。
+ * 三组字段互补：`mtime`（磁盘变了）、`ids`（agent 写了）、`cleared`（agent 收工撤高亮）。
+ * `project` 必填：这条通道是所有项目共用的。
+ */
+export interface DesignsEvent {
+  project: string;
+  path: string;
+  at: number;
+  mtime?: number;
+  ids?: string[];
+  cleared?: true;
+}
+
 /** 创建标记的入参 */
 export interface MarkInput {
   project: string;

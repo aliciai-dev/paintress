@@ -74,6 +74,17 @@ D4 的 seed 现在包含字体登记；D5 的提示词已含字体决策树。�
 **2026-11-15 收口：P1 已实现**（双端 `tsc` 0 错误、32 文件 417 用例全绿、`pnpm build` 通过）。
 摘要见 `.agents/memory/FINISHED.md`；决策见 `.agents/memory/ARCHITECTURE.md#D-012`。
 
+## 补丁批次（2026-11-26）：查看器「最近编辑」标识
+
+> 规格：`specs/viewer-recent-edits.md`（含 operator 四条决策原文）。进度只在 todo 工具里。
+
+| 序 | 单元 | 规格 | 出口（验收摘要） |
+| --- | --- | --- | --- |
+| R1 | mtime 外出 + 项目级 changes 查询 | `viewer-recent-edits.md#1`…`#2` | `/files` 带 `meta.mtime`；`/api/changes?project` 一次列全 |
+| R2 | 目录 `change` 事件 + `designs` SSE | `viewer-recent-edits.md#3` | 改一份已有的稿，没打开的窗口也收得到；不触发全量重扫 |
+| R3 | 前端两级标识 | `viewer-recent-edits.md#4`…`#5` | 金点=金边同源同 TTL；24h 内显示相对时间；顺序不变 |
+| R4 | 真浏览器回归 | `viewer-recent-edits.md#验收` | 写稿出金点、`clear-changes` 撤点、全程不刷新 |
+
 ## 未决问题
 
 - **格式规格存在缺口**（2 处，2026-11-10）：imports 跨文件 id 引用语法缺实例；corner_radius 四元组角顺序未确认。详情与证据标注见 `format/spec.yaml` 的 `ptr.known_gaps`。

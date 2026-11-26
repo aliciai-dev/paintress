@@ -13,6 +13,7 @@ import { Registry, type ProjectEntry } from './registry.js';
 import { MarksStore } from './marks.js';
 import { ChangesStore } from './changes.js';
 import { LineDecoder, encodeLine, type ClientRequest, type ServerResponse } from './protocol.js';
+import type { DesignsEvent } from '../shared/api-types.js';
 import { lockPath, pidPath, runtimeDir, safeJoin, socketPath } from './paths.js';
 import { guardProjectRoot } from './design-root.js';
 import { WatchManager } from './watcher.js';
@@ -460,6 +461,21 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   };
 
   /**
+   * 单份稿的时间戳/变更记录：只推这一条，不重扫项目目录。
+   * 与 projects 事件分工：增删文件改变列表结构，改内容只改变一行的时间。
+   */
+  const broadcastDesigns = (payload: DesignsEvent): void => {
+    const data = JSON.stringify(payload);
+    for (const res of registryClients) {
+      try {
+        res.write(`event: designs\ndata: ${data}\n\n`);
+      } catch {
+        registryClients.delete(res);
+      }
+    }
+  };
+
+  /**
    * agent 自动注册的项目退场：连接归零且无浏览器在看的宽限期后 unwatch。
    * - 宽限期跨过 agent 崩溃重启的窗口（新进程会重新 watch/attach，定时器随即撤销）
    * - 浏览器 SSE 开着时永不退场
@@ -542,7 +558,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         try {
           switch (req.kind) {
             case 'ping':
-              reply({ ok: true, pong: true, pid: process.pid, port, uptimeMs: Date.now() - startedAt, projects: registry.all().length, ...(accessInfo !== null ? { access: accessInfo } : {}) });
+              reply({ ok: true, pong: true, pid: process.pid, port, uptimeMs: Date.now() - startedAt, projects: registry.all().length, ...(accessInfo === null ? {} : { access: accessInfo }) });
               break;
             case 'status':
               reply({
@@ -576,7 +592,26 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               const entry = registry.watch(req.project, req.dir, req.depth, req.owner === 'agent' ? { owner: 'agent' } : {});
               // 人显式 watch 的项目撤回待执行的自动退场
               cancelAutoDetach(entry.name);
-              watchers.watchDesigns(entry.rootReal, entry.depth, scheduleRegistryNotify);
+              watchers.watchDesigns(entry.rootReal, entry.depth, (file, kind) => {
+                if (kind !== 'change') {
+                  // 列表结构变了（新增/删除）：走全量快照，前端会跟着重拉文件列表
+                  scheduleRegistryNotify();
+                  return;
+                }
+                // 改了一份已存在的稿：只推它的时间戳，别的稿和目录结构都没变
+                let mtime = Date.now();
+                try {
+                  mtime = statSync(file).mtimeMs;
+                } catch {
+                  /* change 与 unlink 赛跑：真的没了就交给 projects 事件 */
+                }
+                broadcastDesigns({
+                  project: entry.name,
+                  path: relative(entry.rootReal, file).split(sep).join('/'),
+                  at: Date.now(),
+                  mtime,
+                });
+              });
               // 项目级预设 / 组件库：不存在就建（已存在一个字都不动）。失败不影响注册。
               // 自动注册（scaffold: false）不建：agent 的 cwd 未必是设计根，随手建就是仓库根上的脏文件。
               if (req.scaffold !== false) {
@@ -653,19 +688,26 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 break;
               }
               if (file === undefined) {
+                // 整项目撤销：先拿名单再清，逐份撤点，开着的窗口不用再问一次接口
+                const files = changes.list(project).map((set) => set.file);
                 broadcastChangesCleared(project, undefined);
-                reply({ ok: true, cleared: changes.clear(project) });
+                const cleared = changes.clear(project);
+                for (const one of files) broadcastDesigns({ project, path: one, at: Date.now(), cleared: true });
+                reply({ ok: true, cleared });
                 break;
               }
               broadcastChangesCleared(project, file);
-              reply({ ok: true, cleared: changes.clearFile(project, file) ? 1 : 0 });
+              if (changes.clearFile(project, file)) broadcastDesigns({ project, path: file, at: Date.now(), cleared: true });
+              reply({ ok: true, cleared: changes.get(project, file) === undefined ? 1 : 0 });
               break;
             }
             case 'changes': {
               // req.path 应为绝对路径（调用方已 resolve）。若多个项目根互相包含，取最深根，避免记到外层项目
               const hit = resolveRegisteredFile(req.path);
-              if (hit !== null) {
-                changes.record(hit.project, hit.file, req.ids);
+              if (hit !== null && req.ids.length > 0) {
+                const set = changes.record(hit.project, hit.file, req.ids);
+                // 列表金点与金边同源：写完立刻推一条，别的文件不用等下一次列表刷新
+                broadcastDesigns({ project: set.project, path: set.file, at: set.at, ids: set.ids });
               }
               reply({ ok: true, recorded: hit === null ? 0 : req.ids.length });
               break;
@@ -772,7 +814,17 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
             return;
           }
           entry.lastAccess = Date.now();
-          sendJson(200, { ok: true, project: entry.name, depth: entry.depth, files: registry.listDesigns(entry) });
+          const stats = registry.listDesignStats(entry);
+          // meta 与 files 项逐字对齐：前端拿得到每份稿的 mtime，就能画「多久之前改的」
+          const meta: Record<string, { mtime: number }> = {};
+          for (const file of stats) meta[file.path] = { mtime: file.mtimeMs };
+          sendJson(200, {
+            ok: true,
+            project: entry.name,
+            depth: entry.depth,
+            files: stats.map((file) => file.path),
+            meta,
+          });
           return;
         }
         // 关闭 web 进程（查看器侧栏「关闭服务器」）：等响应发完再走已有 shutdown 流程
@@ -826,6 +878,16 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         if (segments[1] === 'changes') {
           const qProject = url.searchParams.get('project') ?? '';
           const qFile = url.searchParams.get('path') ?? '';
+          // 不带 path = 项目级：侧栏要一次拿到所有「还带着金边」的稿，不必逐文件问
+          if (qFile === '') {
+            if (qProject === '') {
+              sendJson(400, { ok: false, error: '缺少 project' });
+              return;
+            }
+            const list = changes.list(qProject).map(({ file, at, ids }) => ({ file, at, ids }));
+            sendJson(200, { ok: true, changes: list });
+            return;
+          }
           const set = changes.get(qProject, qFile);
           sendJson(200, { ok: true, ids: set?.ids ?? [], at: set?.at ?? 0 });
           return;
@@ -968,7 +1030,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           if (req.method === 'DELETE') {
             const nodeId = url.searchParams.get('nodeId');
             const file = url.searchParams.get('file') ?? undefined;
-            const cleared = nodeId ? (marks.remove(qProject, nodeId, file) ? 1 : 0) : marks.clear(qProject);
+            const cleared = nodeId === null ? marks.clear(qProject) : Number(marks.remove(qProject, nodeId, file));
             sendJson(200, { ok: true, cleared });
             return;
           }
@@ -1032,7 +1094,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
               return;
             }
             // 写操作的项目名可以放在 body 里（前端就是这么发的），也兼容 query
-            const name = qProject !== '' ? qProject : typeof body['project'] === 'string' ? body['project'] : '';
+            const bodyProject = typeof body['project'] === 'string' ? body['project'] : '';
+            const name = qProject === '' ? bodyProject : qProject;
             const entry = registry.get(name);
             if (!entry) {
               sendJson(404, { ok: false, error: `未注册的项目：${name}` });
@@ -1057,7 +1120,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
                 key,
                 type: typeRaw as PresetType,
                 value: String(value),
-                ...(label !== undefined ? { name: label } : {}),
+                ...(label === undefined ? {} : { name: label }),
               });
               notifyRegistry();
               sendJson(200, {
@@ -1386,8 +1449,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     bound = await bindWithFallback({
       create: () => createHttpServer(handleHttp),
       nonce: instanceNonce,
-      ...(opts.port !== undefined ? { requestedPort: opts.port } : {}),
-      ...(opts.bind !== undefined ? { bind: opts.bind } : {}),
+      ...(opts.port === undefined ? {} : { requestedPort: opts.port }),
+      ...(opts.bind === undefined ? {} : { bind: opts.bind }),
       ...(opts.quiet === true ? {} : { log: (line: string) => daemonLog(line) }),
     });
   } catch (cause) {

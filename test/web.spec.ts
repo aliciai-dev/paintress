@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -119,10 +119,72 @@ describe('HTTP 路由', () => {
   it('GET /api/projects/:name/files 返回文件列表', async () => {
     const res = await fetch(`${baseUrl}/api/projects/${PROJECT}/files`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; files: string[]; depth: number };
+    const body = (await res.json()) as {
+      ok: boolean;
+      files: string[];
+      depth: number;
+      meta: Record<string, { mtime: number }>;
+    };
     expect(body.ok).toBe(true);
     expect(body.files.sort()).toEqual(['design.pen', 'sub/ref.pen']);
     expect(body.depth).toBe(3);
+    // meta 与 files 逐项对齐：侧栏靠它画「最近编辑」，缺一项就有一行永远不显示时间
+    expect(Object.keys(body.meta).sort()).toEqual(['design.pen', 'sub/ref.pen']);
+    for (const file of body.files) expect(body.meta[file]?.mtime).toBeGreaterThan(0);
+  });
+
+  it('文件被写后 mtime 前进（列表的「刚刚」就靠它）', async () => {
+    const read = async (): Promise<number> => {
+      const body = (await (await fetch(`${baseUrl}/api/projects/${PROJECT}/files`)).json()) as {
+        meta: Record<string, { mtime: number }>;
+      };
+      return body.meta['design.pen']?.mtime ?? 0;
+    };
+    const target = join(projectDir, 'design.pen');
+    // 退一天：模拟一份很久没动过的稿
+    const old = new Date(Date.now() - 24 * 3600_000);
+    utimesSync(target, old, old);
+    const backdated = await read();
+    expect(backdated).toBeLessThan(old.getTime() + 2_000);
+
+    writeFileSync(target, readFileSync(target));
+    let after = backdated;
+    for (let i = 0; i < 50 && after <= backdated; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      after = await read();
+    }
+    expect(after).toBeGreaterThan(backdated);
+  });
+
+  it('改一份已有的稿：注册表通道收到 designs（带 mtime），不用重拉列表', async () => {
+    const target = join(projectDir, 'design.pen');
+    const controller = new AbortController();
+    const stream = await fetch(`${baseUrl}/events`, { signal: controller.signal });
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    try {
+      // 写完内容相同的字节：事件来自文件变化，不靠内容不同
+      writeFileSync(target, readFileSync(target));
+      let seen = '';
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !seen.includes('event: designs')) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => setTimeout(() => r(null), 200)),
+        ]);
+        if (chunk === null) continue;
+        if (chunk.value !== undefined) seen += new TextDecoder().decode(chunk.value);
+        if (chunk.done) break;
+      }
+      expect(seen).toContain('event: designs');
+      expect(seen).toContain('"project":"test-proj"');
+      expect(seen).toContain('"path":"design.pen"');
+      expect(seen).toMatch(/"mtime":\d+/);
+      // 改内容不该触发全量快照：projects 事件只属于增删
+      expect(seen).not.toContain('event: projects');
+    } finally {
+      controller.abort();
+    }
   });
 
   it('GET /api/projects/:unknown/files → 404 JSON', async () => {

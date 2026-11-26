@@ -9,6 +9,7 @@ import {
   fetchComponents,
   fetchMarks,
   fetchNode,
+  fetchProjectChanges,
   exportUrl,
   fetchNotes,
   fetchPresets,
@@ -20,6 +21,8 @@ import {
   unwatchProject,
   type ComponentItem,
   type DaemonInfo,
+  type DesignFileMeta,
+  type DesignsEvent,
   type Mark,
   type PresetGroup,
   type PresetItem,
@@ -30,6 +33,7 @@ import { isNewer } from '../../src/shared/version-compare.js';
 import { bindViewport, type ViewportBinding } from './frame-viewport';
 import { FRAME_STYLE } from './frame-style';
 import { changedRemainingMs } from './changed';
+import { formatRelative } from './recency';
 import { parseViewport } from './viewport';
 import {
   CanvasBgSwitch,
@@ -59,6 +63,16 @@ interface Crumb {
   id: string;
   type: string;
   name?: string;
+}
+
+/**
+ * 列表行的「最近编辑」数据：mtime 来自磁盘（持久），changed* 来自 daemon 的写入记录
+ * （与画布金边同一个 3 分钟窗口）。两者叠加才既能跨重启、又能区分「还带着金边」。
+ */
+interface FileMeta {
+  mtime: number;
+  changedAt?: number;
+  changedNodes?: number;
 }
 
 /** 项目行：`leaving` 用于退场动画（数据先移除，DOM 多留 220ms） */
@@ -128,6 +142,13 @@ export default function App() {
   const [rows, setRows] = createSignal<ProjectRow[]>([]);
   const [activeProject, setActiveProject] = createSignal<string | null>(null);
   const [files, setFiles] = createSignal<string[]>([]);
+  /** 每份稿的「最近编辑」数据（key 是相对路径，与 files() 项逐字一致） */
+  const [fileMeta, setFileMeta] = createSignal<Record<string, FileMeta>>({});
+  /**
+   * 相对时间的参考时刻：30 秒一跳。不靠列表刷新才更新，也不在页面隐藏时白烧 CPU；
+   * 没有它，「刚刚」会挂到下一次有人动列表为止。
+   */
+  const [now, setNow] = createSignal(Date.now());
   const [activeFile, setActiveFile] = createSignal<string | null>(null);
   const [fontReport, setFontReport] = createSignal<{ checked: string[]; missing: string[] } | null>(null);
   // 切稿时先清掉上一张稿的字体报告，等新稿的探针回来再显示
@@ -296,20 +317,94 @@ export default function App() {
     }
   }
 
+  /**
+   * 文件列表回来：把 mtime 写进标识数据。
+   * 项目已经切走就丢掉这个响应（慢请求不能改写别人的列表）。
+   */
+  function applyFileStats(project: string, meta: Record<string, DesignFileMeta> | undefined): void {
+    if (meta === undefined || activeProject() !== project) return;
+    setFileMeta((prev) => {
+      const next: Record<string, FileMeta> = {};
+      for (const [path, stat] of Object.entries(meta)) {
+        const old = prev[path];
+        next[path] = old === undefined ? { mtime: stat.mtime } : { ...old, mtime: stat.mtime };
+      }
+      return next;
+    });
+  }
+
+  /** 项目级写入记录：金点的初始状态，此后靠 designs 事件增量更新 */
+  async function loadProjectChanges(project: string): Promise<void> {
+    try {
+      const res = await fetchProjectChanges(project);
+      if (activeProject() !== project) return;
+      setFileMeta((prev) => {
+        const next: Record<string, FileMeta> = { ...prev };
+        for (const change of res.changes) {
+          const old = next[change.file] ?? { mtime: 0 };
+          next[change.file] = { ...old, changedAt: change.at, changedNodes: change.ids.length };
+        }
+        return next;
+      });
+    } catch {
+      /* 拉不到就只显示 mtime：标识是增益信息，不拿它挡人看稿 */
+    }
+  }
+
+  /** designs 事件：单份稿的时间戳 / 写入记录 / 撤销，一次 patch 一行 */
+  function applyDesignsEvent(ev: DesignsEvent): void {
+    if (activeProject() !== ev.project) return;
+    setFileMeta((prev) => {
+      const old = prev[ev.path];
+      if (ev.cleared === true) {
+        if (old === undefined || old.changedAt === undefined) return prev;
+        return { ...prev, [ev.path]: { mtime: old.mtime } };
+      }
+      const next: FileMeta = old === undefined ? { mtime: 0 } : { ...old };
+      if (ev.mtime !== undefined) next.mtime = ev.mtime;
+      if (ev.ids !== undefined) {
+        next.changedAt = ev.at;
+        next.changedNodes = ev.ids.length;
+      }
+      return { ...prev, [ev.path]: next };
+    });
+  }
+
+  /**
+   * 一行的「最近编辑」状态：fresh = 还带着金边（与画布同一个 TTL），
+   * 否则只给 mtime 的相对时间（超过 24 小时就不画文字，悬停仍有绝对时间）。
+   */
+  function rowMeta(file: string): { fresh: boolean; label: string; title: string } | null {
+    const meta = fileMeta()[file];
+    if (meta === undefined) return null;
+    const t = now();
+    const fresh = meta.changedAt !== undefined && changedRemainingMs(meta.changedAt, t) > 0;
+    const at = fresh ? (meta.changedAt ?? 0) : meta.mtime;
+    if (at <= 0) return null;
+    return {
+      fresh,
+      label: formatRelative(at, t, lang()) ?? '',
+      title: m().recentEditTitle(new Date(at).toLocaleString(), fresh ? meta.changedNodes : undefined),
+    };
+  }
+
   async function openProject(name: string): Promise<void> {
     setActiveProject(name);
     setActiveFile(null);
     setSelectedId(null);
     setCrumbs([]);
+    setFileMeta({});
     try {
       const res = await fetchFiles(name);
       setFiles(res.files);
+      applyFileStats(name, res.meta);
       setError(null);
     } catch (cause) {
       setFiles([]);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
     void loadMarks(name);
+    void loadProjectChanges(name);
     syncUrl();
   }
 
@@ -326,6 +421,7 @@ export default function App() {
       setActiveProject(null);
       setActiveFile(null);
       setFiles([]);
+      setFileMeta({});
       setSelectedId(null);
       setCrumbs([]);
       syncUrl();
@@ -335,6 +431,7 @@ export default function App() {
       const res = await fetchFiles(p);
       const prev = files();
       setFiles(res.files);
+      applyFileStats(p, res.meta);
       // 新文件到达：若尚未选中任何设计稿，自动选中新出现的第一个，省一次手点
       const f = activeFile();
       if (f === null) {
@@ -351,6 +448,7 @@ export default function App() {
       /* 拉不到就保持现状，下一轮事件再试 */
     }
     void loadMarks(p);
+    void loadProjectChanges(p);
   }
 
   function openFile(file: string): void {
@@ -547,6 +645,14 @@ export default function App() {
     });
     // daemon 要关了（空闲退出 / agent 侧收尾）：不必等它断线，直接进关窗倒计时
     registrySource.addEventListener('shutdown', () => startLeave('closed'));
+    // 单份稿的时间戳 / 写入记录：只 patch 那一行，不重拉列表（旧 daemon 不会发这个事件）
+    registrySource.addEventListener('designs', (ev) => {
+      try {
+        applyDesignsEvent(JSON.parse((ev as MessageEvent<string>).data) as DesignsEvent);
+      } catch {
+        /* 坏载荷直接忽略：标识只是增益，不值得报错 */
+      }
+    });
     onCleanup(() => registrySource.close());
 
     // 首次 /api/projects 只启动后台 npm 探测并返回旧值；4s 后再取才能看到结果。
@@ -557,6 +663,18 @@ export default function App() {
     const versionPoll = setInterval(() => {
       if (!closed()) void refreshDaemonInfo();
     }, 60_000);
+    // 相对时间自己走：页面隐藏时不醒，回来立刻补一次，不在后台空跑
+    const nowTimer = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 30_000);
+    const onVisible = (): void => {
+      if (!document.hidden) setNow(Date.now());
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    onCleanup(() => {
+      clearInterval(nowTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+    });
     onCleanup(() => {
       clearTimeout(versionRetry);
       clearInterval(versionPoll);
@@ -1234,13 +1352,33 @@ export default function App() {
             <Show when={files().length > 0} fallback={<p class="empty">{m().noFiles}</p>}>
               <ul class="list">
                 <For each={files()}>
-                  {(f) => (
-                    <li>
-                      <button class="item" classList={{ active: activeFile() === f }} onClick={() => openFile(f)}>
-                        <span class="item-name">{f}</span>
-                      </button>
-                    </li>
-                  )}
+                  {(f) => {
+                    const info = (): ReturnType<typeof rowMeta> => rowMeta(f);
+                    return (
+                      <li>
+                        <button
+                          class="item"
+                          classList={{ active: activeFile() === f }}
+                          title={info()?.title}
+                          onClick={() => openFile(f)}
+                        >
+                          <span class="item-row">
+                            <span class="item-name">{f}</span>
+                            <Show when={info()?.fresh === true}>
+                              <span class="dot fresh" aria-hidden="true" />
+                            </Show>
+                            <Show when={info()?.label}>
+                              {(label) => (
+                                <span class="item-time" classList={{ fresh: info()?.fresh === true }}>
+                                  {label()}
+                                </span>
+                              )}
+                            </Show>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  }}
                 </For>
               </ul>
             </Show>

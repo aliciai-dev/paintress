@@ -16,6 +16,11 @@ export interface DesignWatchHandle {
   close(): Promise<void>;
 }
 
+/** 目录监听的事件种类：change 只更新单份稿的时间戳，add/unlink 会改变列表本身 */
+type DesignChangeKind = 'add' | 'change' | 'unlink';
+
+type DesignListener = (absPath: string, kind: DesignChangeKind) => void;
+
 interface DesignWatchEntry extends DesignWatchHandle {
   depth: number;
 }
@@ -100,7 +105,7 @@ export class WatchManager {
    * 项目设计稿目录监听：仅 .ptr / .pen 的增删会触发，且遵守项目扫描深度。
    * 相同 root + depth 重复调用复用同一 watcher；depth 变化时重建。
    */
-  watchDesigns(root: string, depth: number, onChange: ChangeListener): DesignWatchHandle {
+  watchDesigns(root: string, depth: number, onChange: DesignListener): DesignWatchHandle {
     const existing = this.designs.get(root);
     if (existing?.depth === depth) return existing;
     if (existing) void existing.close();
@@ -120,13 +125,16 @@ export class WatchManager {
         await watcher.close();
       },
     };
-    const onDesignChange = (file: string): void => {
-      if (DESIGN_EXT.has(extname(file).toLowerCase())) onChange(file);
+    const onDesignChange = (kind: DesignChangeKind, file: string): void => {
+      if (DESIGN_EXT.has(extname(file).toLowerCase())) onChange(file, kind);
     };
     this.designs.set(root, handle);
-    watcher.on('add', onDesignChange);
-    watcher.on('unlink', onDesignChange);
-    watcher.on('unlinkDir', onChange);
+    watcher.on('add', (file) => onDesignChange('add', file));
+    // change 也订阅：改一份已存在的稿不会增删文件，但列表的时间戳得跟着走
+    watcher.on('change', (file) => onDesignChange('change', file));
+    watcher.on('unlink', (file) => onDesignChange('unlink', file));
+    // 目录消失：路径不是设计稿，按「列表变了」上报
+    watcher.on('unlinkDir', (dir) => onChange(dir, 'unlink'));
     watcher.on('error', () => void handle.close());
     return handle;
   }

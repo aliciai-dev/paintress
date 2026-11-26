@@ -60,6 +60,11 @@ export interface Messages {
   quickSwitchPlaceholder: string;
   quickSwitchEmpty: string;
   quickSwitchHint: string;
+  /** 设计稿列表的「最近编辑」标识：金点 = 金边还在，时间文字 = 文件被写过 */
+  justNow: string;
+  minutesAgo: (count: number) => string;
+  hoursAgo: (count: number) => string;
+  recentEditTitle: (time: string, nodes?: number) => string;
   /** 只读属性面板 */
   inspector: string;
   inspectorEmpty: string;
@@ -157,6 +162,11 @@ const MESSAGES: Record<Lang, Messages> = {
     quickSwitchPlaceholder: '输入文件名过滤…',
     quickSwitchEmpty: '没有匹配的设计稿',
     quickSwitchHint: '↑↓ 选择 · Enter 打开 · Esc 关闭',
+    justNow: '刚刚',
+    minutesAgo: (count) => `${count} 分钟前`,
+    hoursAgo: (count) => `${count} 小时前`,
+    recentEditTitle: (time, nodes) =>
+      nodes === undefined ? `最近编辑：${time}` : `最近编辑：${time} · ${nodes} 个节点`,
     inspector: '属性',
     inspectorEmpty: '选中画布里的一个节点，这里显示它的属性。',
     inspectorGroups: {
@@ -244,6 +254,11 @@ const MESSAGES: Record<Lang, Messages> = {
     quickSwitchPlaceholder: 'Type to filter files…',
     quickSwitchEmpty: 'No matching design files',
     quickSwitchHint: '↑↓ choose · Enter open · Esc close',
+    justNow: 'just now',
+    minutesAgo: (count) => `${count} min ago`,
+    hoursAgo: (count) => `${count} h ago`,
+    recentEditTitle: (time, nodes) =>
+      nodes === undefined ? `Last edited ${time}` : `Last edited ${time} · ${nodes} node${nodes === 1 ? '' : 's'}`,
     inspector: 'Properties',
     inspectorEmpty: 'Select a node on the canvas to see its properties.',
     inspectorGroups: {

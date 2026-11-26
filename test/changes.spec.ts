@@ -65,6 +65,37 @@ async function readChanges(path: string): Promise<{ ids: string[]; at: number }>
   return (await http.json()) as { ids: string[]; at: number };
 }
 
+async function readProjectChanges(project: string): Promise<{ file: string; at: number; ids: string[] }[]> {
+  const http = await fetch(`${baseUrl}/api/changes?project=${encodeURIComponent(project)}`);
+  const body = (await http.json()) as { ok: boolean; changes: { file: string; at: number; ids: string[] }[] };
+  return body.changes;
+}
+
+/** 读注册表 SSE 流到出现目标片段（超时返回已读内容，失败信息里能看出差在哪） */
+async function readRegistrySse(needle: string, trigger: () => Promise<unknown>): Promise<string> {
+  const controller = new AbortController();
+  const stream = await fetch(`${baseUrl}/events`, { signal: controller.signal });
+  expect(stream.status).toBe(200);
+  const reader = stream.body!.getReader();
+  let seen = '';
+  try {
+    await trigger();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !seen.includes(needle)) {
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<null>((r) => setTimeout(() => r(null), 200)),
+      ]);
+      if (chunk === null) continue;
+      if (chunk.value !== undefined) seen += new TextDecoder().decode(chunk.value);
+      if (chunk.done) break;
+    }
+  } finally {
+    controller.abort();
+  }
+  return seen;
+}
+
 describe('socket changes → HTTP /api/changes', () => {
   it('绝对路径写入后，HTTP 能读到对应 ids', async () => {
     const res = await sendRequest({
@@ -155,6 +186,43 @@ describe('socket changes → HTTP /api/changes', () => {
   });
 });
 
+describe('项目级 changes 列表', () => {
+  it('一次列出项目内所有未过期记录，不混入其它项目', async () => {
+    await sendRequest({ kind: 'clear-changes', project: 'chg' });
+    await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['title', 'card'] });
+
+    const list = await readProjectChanges('chg');
+    const hit = list.find((c) => c.file === 'design.pen');
+    expect(hit?.ids.sort()).toEqual(['card', 'title']);
+    expect(hit?.at).toBeGreaterThan(0);
+    // 其它项目不能漏进来：这条通道是全项目共用的
+    expect(await readProjectChanges('chg-not-there')).toEqual([]);
+  });
+
+  it('不带 project 时 400：不让人误以为在问所有项目', async () => {
+    const res = await fetch(`${baseUrl}/api/changes`);
+    expect(res.status).toBe(400);
+  });
+
+  it('写入记录时向注册表通道推 designs（列表金点不用重拉）', async () => {
+    // 先清掉再写入：合并窗口（1.5s）内连续写同一份稿会把旧 ids 带上
+    const seen = await readRegistrySse('fresh-node', async () => {
+      await sendRequest({ kind: 'clear-changes', project: 'chg' });
+      await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['fresh-node'] });
+    });
+    expect(seen).toContain('event: designs');
+    expect(seen).toContain('"path":"design.pen"');
+    expect(seen).toContain('"fresh-node"');
+  });
+
+  it('clear-changes 把「撤点」也推到注册表通道', async () => {
+    await sendRequest({ kind: 'changes', path: join(projectDir, 'design.pen'), ids: ['title'] });
+    const seen = await readRegistrySse('"cleared":true', () => sendRequest({ kind: 'clear-changes', project: 'chg' }));
+    expect(seen).toContain('"cleared":true');
+    expect(seen).toContain('"path":"design.pen"');
+  });
+});
+
 describe('ChangesStore 合并与过期', () => {
   it('合并窗口内 ids 合并，不重复', () => {
     const store = new ChangesStore();
@@ -185,6 +253,17 @@ describe('ChangesStore 合并与过期', () => {
     expect(store.get('p', 'a.ptr')).toBeUndefined();
     expect(store.get('p', 'b.ptr')?.ids).toEqual(['b']);
     expect(store.clearFile('p', 'a.ptr')).toBe(false);
+  });
+
+  it('list 只返回本项目的未过期记录', () => {
+    const store = new ChangesStore();
+    const stale = store.record('p', 'old.ptr', ['a']);
+    stale.at = Date.now() - (CHANGE_TTL_MS + 60_000);
+    store.record('p', 'fresh.ptr', ['b']);
+    store.record('other', 'x.ptr', ['x']);
+    expect(store.list('p').map((set) => set.file)).toEqual(['fresh.ptr']);
+    expect(store.list('other').map((set) => set.file)).toEqual(['x.ptr']);
+    expect(store.list('nobody')).toEqual([]);
   });
 
   it('prune 清理过期条目，保留新鲜条目', () => {

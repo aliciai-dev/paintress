@@ -43,6 +43,20 @@ describe('设计稿目录监听', () => {
     await waitFor(() => events.some((file) => file.endsWith('new.ptr')));
   });
 
+  it('改一份已存在的稿推 change（带 kind），新增推 add', async () => {
+    const target = join(root, 'existing.ptr');
+    writeFileSync(target, '{}');
+    const kinds: string[] = [];
+    await manager.watchDesigns(root, 3, (file, kind) => kinds.push(`${kind}:${file.split('/').pop()}`)).ready;
+
+    // 只改内容：列表没变，但时间戳得跟着走（侧栏的「刚刚」靠它）
+    writeFileSync(target, '{"version":"2.22"}');
+    await waitFor(() => kinds.includes('change:existing.ptr'));
+
+    writeFileSync(join(root, 'fresh.pen'), '{}');
+    await waitFor(() => kinds.includes('add:fresh.pen'));
+  });
+
   it('跳过隐藏/构建目录，遵守项目扫描深度', async () => {
     mkdirSync(join(root, 'node_modules/pkg'), { recursive: true });
     mkdirSync(join(root, 'nested/deep'), { recursive: true });
