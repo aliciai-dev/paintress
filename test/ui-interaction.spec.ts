@@ -38,6 +38,8 @@ beforeAll(async () => {
   copyFileSync(join(import.meta.dirname, 'fixtures/basic.pen'), join(dir, 'second.ptr'));
   // 多画板稿：画板条与单帧导出控件
   copyFileSync(join(import.meta.dirname, 'fixtures/boards.pen'), join(dir, 'boards.ptr'));
+  // 负坐标 + 自动高度画板：画布盒子装不下内容时的剪切回归
+  copyFileSync(join(import.meta.dirname, 'fixtures/offscreen.pen'), join(dir, 'offscreen.ptr'));
   // ref.descendants 是对象映射：属性面板要统计覆写条数
   writeFileSync(
     join(dir, 'refs.ptr'),
@@ -285,6 +287,62 @@ browserDescribe('查看器交互（真实浏览器）', () => {
       await page.locator('.boardbar-export button').click();
       const download = await downloadEvent;
       expect(download.suggestedFilename()).toMatch(/\.png$/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('负坐标 / 自动高度画板：平移进来的画板不被切掉，适配覆盖全部画板', async () => {
+    if (browser === undefined) throw new Error('浏览器未就绪');
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`http://127.0.0.1:${daemon.port}/${PROJECT}?file=offscreen.ptr`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.boardbar');
+
+      // 剪切盒只能由根元素提供：body 的盒子就是 .ptr-canvas 的盒子（负坐标 / 自动高度上装不下内容），
+      // 让它继续承担 overflow:hidden 就会把平移进视野的画板切掉。
+      const overflow = await page.evaluate(() => {
+        const w = globalThis as any;
+        const doc = w.document.querySelector('iframe.preview').contentDocument;
+        const overflowOf = (el: any): string => w.getComputedStyle(el).overflow;
+        return [overflowOf(doc.documentElement), overflowOf(doc.body)];
+      });
+      expect(overflow[0]).toBe('hidden'); // 根元素吃掉溢出 → 不出滚动条
+      expect(overflow[1]).not.toBe('hidden');
+
+      // 「全部」按画板实测盒的并集适配：负坐标那块也要落在视野内
+      await page.locator('.board-all').click();
+      await page.waitForTimeout(300);
+      const fitted = await page.evaluate(() => {
+        const w = globalThis as any;
+        const doc = w.document.querySelector('iframe.preview').contentDocument;
+        const view = { w: doc.documentElement.clientWidth as number, h: doc.documentElement.clientHeight as number };
+        const boards = Array.from(doc.querySelectorAll('[data-board]')) as any[];
+        return boards.map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            name: (el.dataset['nodeName'] ?? '') as string,
+            inside: r.left >= -1 && r.top >= -1 && r.right <= view.w + 1 && r.bottom <= view.h + 1,
+          };
+        });
+      });
+      expect(fitted.map((b) => b.name)).toEqual(['负坐标画板', '自动高度画板']);
+      expect(fitted.every((b) => b.inside)).toBe(true);
+
+      // 聚焦负坐标画板：整块都能命中 —— 被切掉的部分连 elementFromPoint 都取不到
+      await page.locator('.boardbar .board').nth(1).click();
+      await page.waitForTimeout(400);
+      const hits = await page.evaluate(() => {
+        const w = globalThis as any;
+        const doc = w.document.querySelector('iframe.preview').contentDocument;
+        const board = doc.querySelector('[data-board]') as any;
+        const r = board.getBoundingClientRect();
+        return [0.5, 0.9, 0.98].map((f: number) => {
+          const hit = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height * f);
+          return hit !== null && (board.contains(hit) as boolean);
+        });
+      });
+      expect(hits).toEqual([true, true, true]);
     } finally {
       await page.close();
     }

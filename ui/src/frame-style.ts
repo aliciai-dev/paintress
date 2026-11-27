@@ -11,7 +11,10 @@ export const FRAME_STYLE = [
   '@keyframes ptr-pulse{0%,100%{box-shadow:inset 0 0 0 2px rgba(144,128,48,1)}50%{box-shadow:inset 0 0 0 2px rgba(144,128,48,.25)}}',
   '@media (prefers-reduced-motion: reduce){[data-ptr-changed]{animation:none !important;}}',
   'html{cursor:default;}',
-  'html,body{overflow:hidden;}',
+  // 只让根元素吃掉溢出：根上的 overflow 会传播到 viewport，滚动条照样没有；
+  // 但 body 的剪切盒等于「.ptr-canvas 的盒子」，而画布变换只作用在子元素上，
+  // 平移进视野的画板仍会被 body 按那块小盒子切掉（负坐标 / 自动高度画板的稿子必然中招）。
+  'html{overflow:hidden;}',
   // 画布背景由父页面注入（CanvasBgSwitch），#fff 为未设置时的兜底
   'html,body{background:var(--ptr-canvas-bg,#ffffff);}',
 ].join('\n');

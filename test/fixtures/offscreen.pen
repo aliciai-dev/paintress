@@ -1,0 +1,51 @@
+{
+  "version": "2.22",
+  "fileToken": "00000000-0000-4000-8000-0000000000ee",
+  "children": [
+    {
+      "type": "frame",
+      "id": "dialog-board",
+      "name": "负坐标画板",
+      "x": -1200,
+      "y": -500,
+      "width": 900,
+      "height": 560,
+      "justifyContent": "center",
+      "alignItems": "center",
+      "fill": "#0B122480",
+      "children": [
+        {
+          "type": "frame",
+          "id": "dialog-card",
+          "name": "弹窗卡片",
+          "width": 600,
+          "layout": "vertical",
+          "padding": 24,
+          "gap": 16,
+          "fill": "#FFFFFF",
+          "children": [
+            { "type": "text", "id": "dialog-title", "name": "标题", "content": "反登记确认", "fontSize": 20, "fill": "#0F172A" },
+            { "type": "rectangle", "id": "dialog-body", "name": "正文", "width": "fill_container", "height": 200, "fill": "#F1F5F9" },
+            { "type": "rectangle", "id": "dialog-foot", "name": "底部按钮", "width": "fill_container", "height": 40, "fill": "#E11D48" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "list-board",
+      "name": "自动高度画板",
+      "x": 0,
+      "y": 200,
+      "width": 1000,
+      "layout": "vertical",
+      "padding": 24,
+      "gap": 12,
+      "fill": "#FFFFFF",
+      "children": [
+        { "type": "text", "id": "list-title", "name": "标题", "content": "收款单列表", "fontSize": 20, "fill": "#0F172A" },
+        { "type": "rectangle", "id": "list-row", "name": "行", "width": "fill_container", "height": 300, "fill": "#E2E8F0" }
+      ]
+    }
+  ]
+}

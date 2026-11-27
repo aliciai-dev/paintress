@@ -208,8 +208,51 @@ export function bindViewport({ doc, onChange, onLevelStep, onQuickSwitch }: Bind
     return false;
   }
 
+  /**
+   * 画板在画布坐标系里的布局盒。
+   *
+   * 用 offset 几何而不是 getBoundingClientRect：后者带着当前变换，要反推倍率；
+   * 而 offset 就是布局坐标，本来就是设计稿坐标，自动排版的画板也只有这里拿得到真实高度。
+   */
+  function layoutBox(el: HTMLElement): Box {
+    if (el.offsetParent === canvas) {
+      return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+    }
+    // 画板不是 canvas 的直接定位子元素时：量真实盒子再按倍率反算
+    const r = el.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    const z = vp.z > 0 ? vp.z : 1;
+    return { x: (r.left - cr.left) / z, y: (r.top - cr.top) / z, w: r.width / z, h: r.height / z };
+  }
+
+  /**
+   * 内容盒：画板盒的并集（可以是负原点）。
+   *
+   * 渲染器给的 `.ptr-canvas` 尺寸只取 `max(x+w)` / `max(y+h)`：负坐标被无视，
+   * 高度缺省（由内容撑开）的自动排版画板按 0 计。照着那块盒子适配「全部」等于框到空气，
+   * 所以这里按画板实测盒求并集。
+   */
+  function contentBox(): Box {
+    const boards = Array.from(doc.querySelectorAll<HTMLElement>('[data-board]'));
+    if (boards.length === 0) {
+      return { x: 0, y: 0, w: canvas.offsetWidth, h: canvas.offsetHeight };
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const el of boards) {
+      const box = layoutBox(el);
+      minX = Math.min(minX, box.x);
+      minY = Math.min(minY, box.y);
+      maxX = Math.max(maxX, box.x + box.w);
+      maxY = Math.max(maxY, box.y + box.h);
+    }
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
   function fitAll(): void {
-    set(fitBox({ x: 0, y: 0, w: canvas.offsetWidth, h: canvas.offsetHeight }, viewportSize()));
+    set(fitBox(contentBox(), viewportSize()));
   }
 
   function centerOn(box: Box): void {
